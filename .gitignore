@@ -10,3 +10,5 @@ dist/
 windows/DshNotchWin/bin/
 windows/DshNotchWin/obj/
 windows/install/.installed.json
+# written next to the acceptance PNG by `--icon`; regenerate instead of committing
+windows/shots/*.ico

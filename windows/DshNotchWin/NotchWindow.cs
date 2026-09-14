@@ -163,6 +163,19 @@ internal sealed class NotchWindow : Form
 
     private NotchClient? _client;
 
+    /// <summary>
+    /// The notification-area icon, created once the window is up. It is the
+    /// capsule's only way out: an overlay with no taskbar button and no chrome
+    /// has nothing for the shell to close.
+    /// </summary>
+    private NotchTray? _tray;
+
+    /// <summary>How many times the tray asked for a toggle / an exit. Counted
+    /// even when the request is suppressed, so the self-test can assert that the
+    /// menu item reached this window rather than dead-ending in NotifyIcon.</summary>
+    private int _trayToggles;
+    private int _trayExitRequests;
+
     /// <summary>Set only while the page self-test is running, so its synthetic
     /// messages can drive the overlay state without touching real data.</summary>
     private bool _pageProbeEnabled;
@@ -292,6 +305,10 @@ internal sealed class NotchWindow : Form
         ApplyOverlayStyles();
         SetClickThrough(true);
 
+        // Before base.OnShown: that raises the Shown event synchronously, and the
+        // self-test (and --shot) start working from there.
+        StartTray();
+
         WriteStartupLog();
 
         base.OnShown(e);
@@ -320,7 +337,85 @@ internal sealed class NotchWindow : Form
         EndFastPointerTracking();
         _client?.Dispose();
         _client = null;
+
+        // An icon whose owner is gone keeps sitting in the notification area
+        // until the user happens to hover it, so it is removed here rather than
+        // left to process teardown.
+        _tray?.Dispose();
+        _tray = null;
+
         base.OnFormClosed(e);
+    }
+
+    // ------------------------------------------------------------------
+    // notification area
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Puts the capsule in the notification area.
+    ///
+    /// This is not a convenience: the window is an overlay (WS_EX_TOOLWINDOW,
+    /// ShowInTaskbar = false, no title bar), so the shell offers no way to close
+    /// it — without this icon a running capsule could only be removed with Task
+    /// Manager, and the installed build auto-starts with the session.
+    /// </summary>
+    private void StartTray()
+    {
+        _tray = new NotchTray();
+        _tray.ToggleRequested += ToggleFromTray;
+        _tray.ExitRequested += ExitFromTray;
+        _tray.Sync(_expanded, _lampCount);
+        _tray.Show();
+
+        NotchLog.Write($"tray shown icon={_tray.IconWidth}px labels=[{string.Join(" | ", _tray.MenuLabels())}]");
+    }
+
+    /// <summary>Keeps the tooltip and the toggle label in step with the capsule,
+    /// so the tray can never claim "已展开" over a collapsed pill. Called from
+    /// every path that moves the expanded flag.</summary>
+    private void SyncTrayStatus() => _tray?.Sync(_expanded, _lampCount);
+
+    /// <summary>Icon double-click / menu "展开胶囊 | 收起胶囊". It reuses the same
+    /// two paths a click on the capsule uses, so the animation, the page
+    /// measurement and the edge anchoring behave exactly as they do for a
+    /// pointer gesture.
+    ///
+    /// Under <c>--selftest</c> the state is left alone (the click is counted
+    /// instead): later sections measure geometry, and moving the capsule from the
+    /// tray mid-test would make those measurements depend on test order.</summary>
+    private void ToggleFromTray()
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+
+        _trayToggles++;
+        if (_selfTest) return;
+
+        if (_expanded) Collapse();
+        else Expand();
+
+        SyncTrayStatus();
+        NotchLog.Write($"tray toggle -> expanded={_expanded}");
+    }
+
+    /// <summary>Menu "退出 dsh-notch-win". Closing the window runs the ordinary
+    /// teardown — animation thread joined, borrowed keyboard returned, transport
+    /// disposed, tray icon removed — rather than killing the process.
+    ///
+    /// Under <c>--selftest</c> the close is suppressed because it would end the
+    /// message loop the self-test is running on and the report would never be
+    /// written; the request is still counted, which is what the assertion reads.</summary>
+    private void ExitFromTray()
+    {
+        _trayExitRequests++;
+
+        if (_selfTest)
+        {
+            NotchLog.Write("tray exit requested (self-test: window left open)");
+            return;
+        }
+
+        NotchLog.Write("tray exit requested — closing");
+        Close();
     }
 
     /// <summary>
@@ -952,6 +1047,11 @@ internal sealed class NotchWindow : Form
 
                 _startingUp = false;
 
+                // Whatever moved the expanded flag above (an ask appearing or
+                // being answered, a lamp change, the pointer) has to be reflected
+                // in the tray, or its menu would offer the wrong direction.
+                SyncTrayStatus();
+
                 SendSnapshotJson(json);
             });
         }
@@ -1423,6 +1523,7 @@ internal sealed class NotchWindow : Form
         _expanded = true;
         UpdateGeometryTarget();
         PushSnapshotNow();
+        SyncTrayStatus();
     }
 
     /// <summary>Jump straight to the expanded state. Used by --shot so a capture
@@ -1582,6 +1683,7 @@ internal sealed class NotchWindow : Form
 
         UpdateGeometryTarget();
         PushSnapshotNow();
+        SyncTrayStatus();
     }
 
     /// <summary>The page's own content measurement, in physical pixels. Only the
@@ -2461,6 +2563,8 @@ internal sealed class NotchWindow : Form
         lines.AddRange(await RunRobotSelfTestAsync(Check));
         lines.Add("");
         lines.AddRange(RunDataSelfTest(Check));
+        lines.Add("");
+        lines.AddRange(RunTraySelfTest(Check));
 
         lines.Add("");
         lines.Add(failures == 0 ? "RESULT: PASS" : $"RESULT: FAIL ({failures} check(s))");
@@ -4642,6 +4746,122 @@ internal sealed class NotchWindow : Form
             big[0].Top == 0 && big[^1].Bottom == 390 && big.TrueForAll(r => r.Left == 0 || r.Left > 0),
             $"rects={big.Count} span={big[0].Top}-{big[^1].Bottom}");
 
+        return lines;
+    }
+
+    /// <summary>Colour match with the tolerance the canvas ink classifier uses;
+    /// anti-aliased disk edges are deliberately excluded.</summary>
+    private static bool NearTray(Color c, int r, int g, int b)
+        => Math.Abs(c.R - r) <= 48 && Math.Abs(c.G - g) <= 48 && Math.Abs(c.B - b) <= 48;
+
+    /// <summary>
+    /// Tray checks (the capsule's only exit route).
+    ///
+    /// Three claims are worth asserting, and none of them is "a NotifyIcon was
+    /// constructed": that the icon is really visible and carries a DRAWN glyph
+    /// (counted in pixels, the way the canvas checks are), that the menu offers
+    /// an exit, and that clicking that item reaches THIS window — a menu item
+    /// wired to nothing looks identical from the outside.
+    /// </summary>
+    private List<string> RunTraySelfTest(Action<string, bool, string> check)
+    {
+        var lines = new List<string>();
+
+        check("tray icon present",
+            _tray is { Visible: true, HasIcon: true } && (_tray?.Tooltip.Length ?? 0) > 0,
+            $"visible={_tray?.Visible} icon={_tray?.IconWidth}px text=\"{_tray?.Tooltip}\"");
+
+        // The glyph is drawn at whatever size the current DPI asks for, so it is
+        // re-rendered here and measured in pixels the way the canvas checks are:
+        // an icon that silently stopped drawing (a transparent bitmap, a missing
+        // rim, the disks dropped in an edit) would still be "present".
+        var glyphLines = new List<string>();
+        bool glyphOk = true;
+        foreach (int size in new[] { 16, Math.Max(16, SystemInformation.SmallIconSize.Width), 48 }.Distinct())
+        {
+            using Bitmap glyph = TrayGlyph.Render(size);
+            int ink = 0, dark = 0, rim = 0, blue = 0, green = 0;
+            int minX = int.MaxValue, maxX = -1, minY = int.MaxValue, maxY = -1;
+
+            for (int y = 0; y < glyph.Height; y++)
+            {
+                for (int x = 0; x < glyph.Width; x++)
+                {
+                    Color c = glyph.GetPixel(x, y);
+                    if (c.A < 32) continue;
+
+                    ink++;
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+
+                    int luma = (c.R * 299 + c.G * 587 + c.B * 114) / 1000;
+                    if (c.A > 200 && luma < 70) dark++;          // the pill body
+                    if (c.A > 120 && luma > 190) rim++;          // its light rim
+                    if (NearTray(c, 0x36, 0x8A, 0xFF)) blue++;   // running
+                    if (NearTray(c, 0x35, 0xD0, 0x5A)) green++;  // completed
+                }
+            }
+
+            double coverage = ink / (double)(glyph.Width * glyph.Height);
+            bool inside = minX >= 0 && maxX < glyph.Width && minY >= 0 && maxY < glyph.Height;
+            bool ok = ink > 0 && coverage > 0.08 && coverage < 0.9
+                && inside && maxX - minX >= glyph.Width * 0.6 && maxY - minY >= glyph.Height * 0.25
+                && dark > 0 && rim > 0 && blue > 0 && green > 0;
+            glyphOk &= ok;
+
+            glyphLines.Add($"{size}px ink={ink} cover={coverage:0.##} "
+                + $"dark={dark} rim={rim} blue={blue} green={green} bbox=({minX},{minY})-({maxX},{maxY})");
+        }
+
+        check("tray glyph painted", glyphOk, string.Join("; ", glyphLines));
+
+        // A drawn glyph is not a valid ICO: this is the format check — a
+        // malformed entry makes NotifyIcon show a blank square, which the tray
+        // checks above cannot see.
+        using (Icon icon = TrayGlyph.CreateIcon(NotchTray.IconSizes()))
+        {
+            check("tray icon decodes",
+                icon.Width > 0 && icon.Height > 0 && icon.Width == icon.Height,
+                $"ico {icon.Width}x{icon.Height} request=[{string.Join(",", NotchTray.IconSizes())}]");
+        }
+
+        List<string> menu = _tray?.MenuLabels() ?? new List<string>();
+        check("tray menu offers exit",
+            menu.Count == 3 && menu[1] == "-" && menu[0].Length > 0
+                && menu[2] == _tray?.ExitLabel && menu[2].Length > 0,
+            $"[{string.Join(" | ", menu)}]");
+
+        int exitsBefore = _trayExitRequests;
+        _tray?.ClickExitForTest();
+        check("tray exit reaches the window",
+            _trayExitRequests == exitsBefore + 1 && !IsDisposed,
+            $"requests={_trayExitRequests} disposed={IsDisposed} (self-test keeps it open)");
+
+        bool wasExpanded = _expanded;
+        int togglesBefore = _trayToggles;
+        _tray?.ClickToggleForTest();
+        check("tray toggle reaches the window",
+            _trayToggles == togglesBefore + 1 && _expanded == wasExpanded,
+            $"toggles={_trayToggles} expanded={_expanded} unchanged={_expanded == wasExpanded}");
+
+        // The tooltip is state, not decoration: it has to follow the capsule and
+        // the lamp count, and the toggle label has to offer the other direction.
+        _tray?.Sync(expanded: true, lampCount: 2);
+        string expandedTip = _tray?.Tooltip ?? string.Empty;
+        string expandedLabel = _tray?.ToggleLabel ?? string.Empty;
+        _tray?.Sync(expanded: false, lampCount: 3);
+        string collapsedTip = _tray?.Tooltip ?? string.Empty;
+        check("tray tooltip tracks state",
+            expandedTip.Contains("已展开") && expandedTip.Contains("2 个会话")
+                && expandedLabel == "收起胶囊"
+                && collapsedTip.Contains("已收起") && collapsedTip.Contains("3 个会话")
+                && (_tray?.ToggleLabel ?? string.Empty) == "展开胶囊",
+            $"expanded=\"{expandedTip}\" / \"{expandedLabel}\", collapsed=\"{collapsedTip}\"");
+
+        _tray?.Sync(_expanded, _lampCount);
+        lines.Add($"  tray: icon={_tray?.IconWidth}px tooltip=\"{_tray?.Tooltip}\" log=%TEMP%\\dsh-notch-win.log");
         return lines;
     }
 }

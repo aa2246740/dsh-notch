@@ -17,6 +17,7 @@
 | 需重写 | macOS 原生 UI 层 2,709 行 Swift（AppKit + SwiftUI + Canvas） |
 | 意外收获 | 机器人动画的 **JS 源码自包含可复用**，9.4MB JSON 与 413 行 Swift 插值都不用移植 |
 | 最大风险 | WebView2 透明窗口，已在计划中前置 spike，并备有 Acrylic 兜底方案 |
+| 退出通道 | 胶囊是覆盖层（无任务栏按钮、无标题栏、不进 Alt-Tab），因此新增**通知区域图标**：右键可展开/收起与退出（§7.5）。上游 macOS 同样没有一个"可关闭的窗口"，通知区域就是 Windows 侧的对应物 |
 
 三项已定决策（用户选定）：**① WebView2 + C# WinForms 外壳 ② 胶囊贴屏幕右上角 ③ 一次做到完整还原**。
 
@@ -246,6 +247,31 @@ D:\DSH\dsh-notch-win\              ← 上游 fork
 
 ---
 
+### 7.5 通知区域（托盘）图标 —— 唯一的退出通道
+
+胶囊是覆盖层：`WS_EX_TOOLWINDOW` + `ShowInTaskbar=false` + 无标题栏，所以
+
+- 任务栏上没有按钮，Alt-Tab 里没有它，窗口上没有任何可右键的边框；
+- 装入 HKCU 自启后它会随会话一直存在；
+
+**没有这个图标时，用户唯一的退出方式是任务管理器**（Phase 6 结束时就是这个状态）。上游 macOS 也没有"可关闭的窗口"，通知区域是 Windows 侧的对应物。
+
+实现（`windows/DshNotchWin/NotchTray.cs`）：
+
+| 项 | 做法 | 理由 |
+|---|---|---|
+| 图标 | `NotifyIcon` + 右键 `ContextMenuStrip`：**展开胶囊 / 收起胶囊**、分隔线、**退出 dsh-notch-win**；双击图标 = 展开/收起 | 右键菜单是 Windows 的既定交互；双击等价于菜单第一项 |
+| 退出语义 | 菜单项 → 事件 → `Form.Close()`，走的是与其它关闭完全相同的拆卸路径（join 动画线程、归还借用的键盘、Dispose transport、移除图标），**不是** `Environment.Exit` | 让托盘退出与程序自身关闭没有第二条代码路径 |
+| 图形 | 在代码里按 16 单位网格绘制（深色胶囊 + 亮边框 + 蓝/绿状态盘），按当前 DPI 的尺寸渲染，多尺寸 ICO 在内存里组装后用 `new Icon(stream)` | ①不把二进制资源塞进仓库；②100%/150%/200% 各自原生渲染，不靠缩放；③`Icon(stream)` 自带数据，不需要 `DestroyIcon` 托管 GDI 句柄 |
+| 提示文字 | `dsh-notch-win · 已展开/已收起 · N 个会话（右键退出）` | 图标本身不带状态，tooltip 是唯一能说明"它现在是什么样"的地方 |
+| 自检期间 | 菜单点击照计数，但**不真的关窗、不真的改展开态** | 关窗会终止自检赖以运行的 message loop（报告就写不出来）；改展开态会让后面的几何断言依赖测试顺序 |
+
+**一个必须记住的性能坑**：`NotifyIcon.Text` 的 setter 会走 `Shell_NotifyIcon`，那是一次**同步跨进程调用 explorer.exe**，而这个方法挂在"每收到一帧快照就同步一次"的 UI 路径上。第一版逐帧赋值，直接把渲染帧循环拖慢 —— 表现是 orbit 自检的定点相位采样开始报 `green ink 0 at 0.25s` 之类的偏差。改成**值不变就不写**之后恢复正常。教训与 §7.1（把工作放在正确的层）同源：**不要在高频路径上做跨进程调用**。
+
+`--icon <path>` 是它的自动化出口：导出 PNG（48 px 渲染）+ 多尺寸 ICO，用来在没有人眼看着通知区域时验收图形本身。
+
+---
+
 ## 8. 设计常量表（从上游源码提取，用于对齐观感）
 
 ### 8.1 颜色（`RootView.swift` NotchTokens）
@@ -373,6 +399,7 @@ D:\DSH\dsh-notch-win\              ← 上游 fork
 - [~] 多显示器 + 非 100% 缩放 —— 本机单屏 150% 实测通过（自检 1、10-27）；**没有第二块屏，多屏未实测**
 - [x] Reduce Motion 开启时直接显示终态（自检 99/100、117）
 - [x] 单实例（实测第二次启动 `exit=2 already running`）
+- [x] **通知区域图标可右键退出**（§7.5；自检 133-139；`windows/shots/tray-icon.png`；实测进程 `WM_CLOSE` 1.5 s 内干净退出）
 
 **动效**
 - [x] 四态颜色与 §8.1 一致（自检 92/93/96-98；`p4-*.png`）
@@ -395,7 +422,7 @@ D:\DSH\dsh-notch-win\              ← 上游 fork
 | 2 | `WS_EX_NOACTIVATE` 与文本输入抢焦点冲突 | 中 | 输入期间临时切样式 + `SetForegroundWindow`，结束还原；对照上游 `canBecomeKey` 行为 |
 | 3 | 大透明窗口挡住下层点击 | 中 | §7.4 的岛矩形穿透判定必须有边界测试；保守方案回退到每帧改窗口尺寸 |
 | 4 | 独占全屏（游戏/视频）盖不住 | 中 | 接受降级（mac 的 `.fullScreenAuxiliary` 无对应物），在文档中说明 |
-| 5 | 右上角与通知中心/托盘冲突 | 低 | 留边距、可配置偏移；上游 `DSH_NOTCH_RUNTIME_FILE` 的 +360pt 偏移逻辑一并移植 |
+| 5 | 右上角与通知中心/托盘冲突 | 低 | 留边距、可配置偏移；上游 `DSH_NOTCH_RUNTIME_FILE` 的 +360pt 偏移逻辑一并移植。**Phase 7 补充**：胶囊本体贴右边缘，通知区域内新增的是它自己的图标（§7.5），两者互不遮挡；首次运行图标可能落在"隐藏的图标"折叠区里，需要在 设置 → 个性化 → 任务栏 → 其他系统托盘图标 里打开 |
 | 6 | 令牌文件权限（`0600` 在 Windows 是空操作） | 中 | 用 NTFS ACL 收紧到当前用户；或改用 DPAPI 保护 |
 | 7 | 上游分叉后同步困难 | 低 | `macos/` 与 `src/` 保持原样，只新增 `windows/`，便于上游 PR |
 | 8 | 本机无 .NET SDK | 低 | `winget install Microsoft.DotNet.SDK.8`，可 `winget uninstall` 回滚 |
@@ -1018,6 +1045,8 @@ pwsh -File windows\install\uninstall.ps1
 
 **自动化总账**：`--selftest` **132 项全 PASS**（退出码 0）、`orbit-math.test.mjs` **38 项 PASS**、`sidebar-seen.test.mjs` **5 项 PASS**、真实 Host 路由 `GET /status` 200 / `GET /events` 有帧、单实例退出码 2、安装/卸载往返逐行一致。
 
+> Phase 7 之后的当前总账见 §15「Phase 7」：`--selftest` **139 项（137 PASS + 2 项已知偶发）**，另有两项像素采样在此机器上不稳定，**基线同样复现**（详见该节「已知遗留」）。
+
 #### 6.5 开机自启：已按用户确认打开 ✅
 
 用户 2026-09-14 明确选择"现在就打开"，已执行 `pwsh -File windows\install\install.ps1 -NoBuild -Start`：
@@ -1050,5 +1079,93 @@ pwsh -File windows\install\uninstall.ps1
 | `windows/shots/p4-live.png` | **真实数据**下的四态笔画（绿 1 + 蓝 1） | 有真实任务在跑时 `... --shot windows\shots\p4-live.png` |
 | `windows/shots/p5-idle.png` | 待机机器人（白） | `... --shot windows\shots\p5-idle.png --robot idle` |
 | `windows/shots/p5-flight.png` | 离场中段（半收缩 + 蓝环） | `... --shot windows\shots\p5-flight.png --robot flight` |
+| `windows/shots/tray-icon.png` | 通知区域图标本身（Phase 7） | `... --icon windows\shots\tray-icon` （同时写出多尺寸 `tray-icon.ico`，只入库 PNG） |
 
 `exe` = `windows\DshNotchWin\bin\Release\net8.0-windows\win-x64\dsh-notch-win.exe`。`--shot` 是自动化路径：**不写**用户的位置文件，合成状态的那几条还会先 Dispose 掉真实 transport，防止真实快照在曝光中途覆盖画面。
+
+---
+
+### Phase 7 — 通知区域图标 + §12#6 风险重估（2026-09-14，**已完成 ✅**）
+
+**用户要求（原话）**：「做一个托盘图标，可以右键点击关闭」「把 §12#6 那条改成"接受现状 + 理由"」。
+
+#### 7.1 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `windows/DshNotchWin/NotchTray.cs`（新增 322 行） | `NotifyIcon` + 右键菜单（展开胶囊 / 收起胶囊 / 退出）+ 双击切换；tooltip 跟随状态；`Sync` 只在值变化时才写（见 7.3）；`TrayGlyph` 在代码里绘制多尺寸图标并在内存里组装 ICO |
+| `windows/DshNotchWin/NotchWindow.cs` | `StartTray`（`OnShown` 里、`base.OnShown` **之前**建，自检才来得及断言）、`SyncTrayStatus`（`Expand`/`Collapse`/每帧快照后）、`ToggleFromTray`/`ExitFromTray`、`OnFormClosed` 里 Dispose（否则残留幽灵图标）、`RunTraySelfTest` **+7 项** |
+| `windows/DshNotchWin/Program.cs` | `--icon <path>`：导出 PNG + 多尺寸 ICO（无人眼看着通知区域时的图形验收出口） |
+| `windows/shots/tray-icon.png` | 入库的图标验收图（1.4 KB） |
+| `PLAN.md` | 本节 + §7.5 + §0/§11/§12 条目更新 |
+
+#### 7.2 自检结果
+
+```
+--selftest   139 项：137 PASS + 2 项 FAIL（已知偶发，见 7.4）；退出码 1（= 失败项数）
+新增 7 项（全部 PASS）：
+  [PASS] tray icon present                  visible=True icon=48px text="dsh-notch-win · 已收起（右键退出）"
+  [PASS] tray glyph painted                 16px ink=114 cover=0.45 dark=59 rim=25 blue=2 green=2 bbox=(1,3)-(14,11);
+                                            24px ink=240 cover=0.42 dark=149 rim=26 blue=6 green=7 bbox=(2,4)-(22,17);
+                                            48px ink=988 cover=0.43 dark=569 rim=171 blue=38 green=39 bbox=(3,9)-(44,35)
+  [PASS] tray icon decodes                  ico 48x48 request=[24,48]
+  [PASS] tray menu offers exit              [展开胶囊 | - | 退出 dsh-notch-win]
+  [PASS] tray exit reaches the window       requests=1 disposed=False (self-test keeps it open)
+  [PASS] tray toggle reaches the window     toggles=1 expanded=True unchanged=True
+  [PASS] tray tooltip tracks state          expanded="…已展开 · 2 个会话（右键退出）" / "收起胶囊", collapsed="…已收起 · 3 个会话（右键退出）"
+```
+
+图形断言不是"图标存在"，而是**按像素数**：三种尺寸各自重绘一遍，要求 ①有墨 ②覆盖率在 8%~90% ③包围盒既不贴边也不塌缩 ④深色胶囊体、亮边框、蓝盘、绿盘四类像素都 > 0。这样"某次编辑把盘子删了"或"位图变全透明"都会被抓住。
+
+真机验证（不是自检）：
+
+```
+# 启动
+2026-09-14T20:58:41  tray shown icon=48px labels=[展开胶囊 | - | 退出 dsh-notch-win]
+2026-09-14T20:58:41  transport stream connected   → rest height -> 57x68 orbit=20.57pt
+# 关闭：给覆盖层窗口（EnumWindows 按标题找，MainWindowHandle 对 WS_EX_TOOLWINDOW 恒为 0）发 WM_CLOSE
+exited=True after 1.5s
+```
+
+用户在自己屏幕上确认（隐藏图标折叠区里）能看到该图标，图形与 `--icon` 导出的 PNG 一致。
+
+退出链路的两段是被分别证明的：**菜单项 → `Close()`** 由自检的 `tray exit reaches the window` 证明（`PerformClick` 真点一次，断言请求计数 +1）；**`Close()` → 干净退出** 由上面的 `WM_CLOSE` 证明。中间那段"`ExitFromTray` 调用的就是 `Close()`"是同一行代码。
+
+#### 7.3 两个非显然的坑
+
+1. **`NotifyIcon.Text` 的 setter 是同步跨进程调用**（`Shell_NotifyIcon` → explorer.exe）。第一版把它挂在"每收到一帧快照"的 UI 路径上逐帧写，直接把渲染帧循环拖慢，表现为 orbit 自检的定点相位采样开始报偏差（`green ink 0 at 0.25s`）。改成**值不变不写**后恢复。这不是微优化，是"高频路径上不要做跨进程调用"。
+2. **托盘菜单文案必须显式设置**：`new ToolStripMenuItem()` 的 `Text` 是空串，第一版自检直接把菜单读成 `[展开胶囊 | - | ]` 而 FAIL —— 这正是自检该有的样子（菜单项存在、可点击、但没有任何文字）。
+
+另一个只有自检能碰到的问题：在 `--selftest` 下真的关窗会终止自检赖以运行的 message loop（报告根本写不出来），所以 `ExitFromTray` 在自检下只计数不关窗；同理托盘切换在自检下不改展开态，避免后面的几何断言依赖测试顺序。
+
+#### 7.4 已知遗留（诚实记录，**与本阶段改动无关**）
+
+`--selftest` 有 2 项像素采样在本机偶发 FAIL：
+
+```
+[FAIL] the outcome is drawn, not faded in   green ink 0 at 0.25s (a partial arc) -> 648 -> 617 px at 0.95s
+[FAIL] the failure brush crosses the corridor too   ink in y 33..39: 2 (0.25) 2 (0.5) 0 (0.95)
+```
+
+用 `git worktree add <tmp> HEAD`（= 不含本阶段任何改动的基线提交 `450d597`）单独构建并跑同一份自检作为对照：**基线同样复现，且是 3 项**（多出红色的 `the failure outcome is drawn, not faded in red`，红色那条在本阶段构建里反而是 PASS）。所以这两项是这台上/这个时机下的**不稳定采样**，不是本阶段引入的回归；它们都落在 Phase 4/5 的"定点相位 + 像素分类"断言里（机器人探针状态在两次运行间就不同：基线读到 `paint=-` + `reason=reset`，本阶段读到 `paint={scale:0.061, cy:36}`）。本阶段不修它（不在用户要求范围内），但把结论如实写在这里，避免下一次有人误以为是托盘改动的锅。
+
+#### 7.5 §12#6「令牌文件权限」改成接受现状：判定证据
+
+原条目假设"`mode: 0o600` 在 Windows 是空操作，所以令牌文件是敞开的"，缓解措施写成"用 NTFS ACL 收紧到当前用户；或改用 DPAPI"。实际勘察的结论是**这条风险不成立**：
+
+```
+> icacls "$env:USERPROFILE\.dsh\dsh-notch\runtime.json"
+C:\Users\Administrator\.dsh\dsh-notch\runtime.json  NT AUTHORITY\SYSTEM:(I)(F)
+                                                    BUILTIN\Administrators:(I)(F)
+                                                    YOU\Administrator:(I)(F)
+> (Get-Acl ...).Owner
+BUILTIN\Administrators
+```
+
+1. `runtime.json` 在 `%USERPROFILE%\.dsh\dsh-notch\`（`src/store.ts:7`），ACL 是**从 profile 目录继承**的 `(I)`：只有本人、SYSTEM、Administrators 三个主体。0o600 想表达的"只有本用户可读"，在 NTFS 上**默认就成立** —— 这是用户目录的默认安全设置，不需要这段代码去挣。
+2. 0o600 真正能挡的是"**同一台机器上以其他用户身份**运行的进程"（Windows 上是"其他 SID"），而这一点 NTFS 继承已经做到了。
+3. 它**挡不住**的是"以本用户身份运行的其他进程"——那种进程无论有没有显式 ACL 都能读这个文件（同一 SID，必要时自己给自己授权）。所以显式 `icacls` 收紧在这条威胁上买不到任何东西。
+4. 令牌的作用面本身也有限：`src/http.ts:113` 是 `if (!isLoopback(req) || !authorized(req, token))`，**非环回请求一律拒绝**，令牌只在 `127.0.0.1` 上有意义；Bearer 令牌也从不进入页面 JS（§7.1）。
+5. 一份显式 ACL 脚本还会带来新的失败模式：安装/首次运行时的 `icacls` 失败会让整个启动路径失败，而它保护的东西并没有变得更安全。
+
+结论：**接受现状（不加显式 ACL、不改 DPAPI），并在 §12 里把等级从「中」降到「低」**。DPAPI 保护仍然是一个"如果将来要防同用户进程"时的选项，但那时真正的边界不在文件权限上，而在"谁能在本机以本用户身份执行代码"——那已经不是这个插件能回答的问题。
