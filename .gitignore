@@ -7,3 +7,6 @@ runtime.json
 *.log
 *.png
 dist/
+windows/DshNotchWin/bin/
+windows/DshNotchWin/obj/
+windows/install/.installed.json
