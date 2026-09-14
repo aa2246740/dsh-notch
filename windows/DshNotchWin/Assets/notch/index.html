@@ -1,0 +1,3070 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>dsh-notch</title>
+<style>
+  /* Design tokens lifted from the macOS build (RootView.swift NotchTokens:6-41).
+     Every colour and size below is a port; anything invented is marked. */
+  :root{
+    --blue:#4D6BFE;   /* deepSeekBlue  — running / busy        */
+    --amber:#F2FF14;  /* amber         — waiting for a decision */
+    --green:#34C759;  /* greenComplete — finished successfully  */
+    --red:#FF4000;    /* redFail       — finished with failure  */
+    --bg:#000;
+    --field:#0F0F12;
+    --radius:16px;
+
+    /* The shell is the expanded panel's own size: the capsule always lays its
+       content out at full size and is CLIPPED to the window, which is how the
+       macOS build reveals content as the shell blooms. Scaling the content
+       instead would shrink the type with it. */
+    --panel-w:480px;
+    --lamp:19px;
+    --lamp-pitch:28px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{
+    height:100%;
+    background:transparent;
+    /* The shell is wider than the collapsed window: the viewport is the clip. */
+    overflow:hidden;
+    font-family:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+    user-select:none;
+    -webkit-user-select:none;
+  }
+  #shell{
+    /* Anchored to the attached edge; the free side is clipped by the window. */
+    position:absolute;top:0;
+    width:var(--panel-w);
+    /* The window IS the viewport, so the shell follows it. It used to be a fixed
+       260 px, which capped the panel: anything taller (a long question detail,
+       more rows than fit) was clipped by a shell that stopped growing while the
+       window kept going. The page still measures its own CONTENT height — that is
+       what the host sizes the window to — so following the viewport here cannot
+       feed back into the measurement. */
+    height:100vh;
+    background:var(--bg);
+    overflow:hidden;
+    color:#fff;
+    display:flex;
+    flex-direction:column;
+    cursor:grab;                          /* vertical drag affordance */
+  }
+  body.edge-right #shell{right:0;border-radius:var(--radius) 0 0 var(--radius)}
+  body.edge-left  #shell{left:0; border-radius:0 var(--radius) var(--radius) 0}
+  /* Hover no longer expands — it only signals that the shell is interactive. */
+  body.hovered #shell{cursor:ns-resize}
+
+  /* ---- rest: the four-state stroke (Phase 4) --------------------------
+     The compact pill is ONE canvas, exactly as the macOS build paints it with
+     one Canvas (StatusOrbit.swift:495-632): amber decision, green completed,
+     blue running, red failed, on a 28 pt pitch, with the migrating brush
+     travelling between the slots (docs/motion-continuity.md:15).
+
+     The canvas is the pill's whole inner box (the viewport) and the 30 pt
+     orbit frame is drawn CENTRED inside it — that is what upstream's
+     `orbitLayout.height + 24` means (RootView.swift:557-560): 12 pt of black
+     above and below the 20 pt single-lamp frame. Drawing it at a fixed
+     20x[layout height] box would clip the brush at the top of the arrival
+     circle, which upstream never does (Canvas does not clip its ink).
+
+     The height here is the VIEWPORT, not the shell: the shell is laid out at
+     the expanded panel size (480x260) and clipped by the window, so a rest
+     block that filled the shell would centre the lamps 130 px down — outside a
+     44 px collapsed window — and the capsule would look empty. ============ */
+  #rest{
+    height:100vh;flex:0 0 auto;
+    display:flex;align-items:center;justify-content:center;
+  }
+  #orbit{
+    width:30px;height:100%;display:block;
+    overflow:visible;
+    transform-origin:center;
+    /* Upstream scales the pill's content by 1.08 while it is hovered and there
+       is something to look at, with a spring (RootView.swift:697-698). The
+       spring is approximated here; it is decoration, not part of the status
+       contract, and the host's own 2 pt hover shortening still applies. */
+    transition:transform .32s cubic-bezier(.22,1.1,.36,1);
+  }
+  body.hovered.hasstatus #orbit{transform:scale(1.08)}
+  body.expanded #rest{display:none}
+
+  /* ---- expanded: badges + session list ------------------------------- */
+  #panel{
+    display:none;flex:1;min-height:0;
+    flex-direction:column;padding:14px;gap:12px;   /* RootView.swift:731,714 */
+  }
+  body.expanded #panel{display:flex}
+  /* One ease-out reveal while the window is still growing (RootView.swift:632). */
+  body.expanded #panel{animation:reveal .16s ease-out}
+  @keyframes reveal{from{opacity:0}to{opacity:1}}
+
+  #badges{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+  .badge{
+    display:flex;align-items:center;gap:4px;
+    padding:3px 6px;border-radius:999px;
+    font-size:10px;font-weight:600;
+  }
+  .badge .dot{width:6px;height:6px;border-radius:50%}
+  .badge.busy{background:rgba(77,107,254,.14);color:var(--blue)}
+  .badge.busy .dot{background:var(--blue)}
+  .badge.completed{background:rgba(52,199,89,.14);color:var(--green);gap:5px}
+  .badge.completed .dot{background:var(--green)}
+  #clear{
+    margin-left:auto;background:none;border:0;color:rgba(255,255,255,.4);
+    /* Longhands, NOT `font:600 9px/1 inherit`: a CSS-wide keyword is not a valid
+       family in the font shorthand, so that declaration is dropped whole and the
+       button silently renders at the inherited 16px — which is also what made the
+       badge row 27 px tall instead of 19 and left every measurement 8 px short. */
+    font-weight:600;font-size:9px;line-height:1;font-family:inherit;
+    letter-spacing:.02em;cursor:pointer;padding:4px;
+  }
+  #clear:hover{color:rgba(255,255,255,.8)}
+
+  #list{
+    /* Fixed width + a permanently reserved scrollbar gutter, so the column width
+       NEVER depends on whether the list is scrolling. With an auto gutter,
+       content growing past the viewport summons a scrollbar, which narrows the
+       text, which makes it taller — and since the panel's height is measured from
+       this element, that is a feedback loop: the capsule would hunt for a height
+       forever (it ran at ~200 geometry updates/second before this). */
+    width:calc(var(--panel-w) - 28px - 4px);
+    flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
+    scrollbar-gutter:stable;
+    display:flex;flex-direction:column;gap:4px;   /* RootView.swift:993 */
+  }
+  #list::-webkit-scrollbar{width:4px}
+  #list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:2px}
+  #list::-webkit-scrollbar-track,#list::-webkit-scrollbar-track-piece{background:transparent}
+  /* No `scrollbar-width`/`scrollbar-color` anywhere in this file, on purpose:
+     Chromium then switches to the NATIVE scrollbar and IGNORES every
+     ::-webkit-scrollbar rule below. The native one paints its track and arrows
+     into a reserved gutter even when nothing overflows, which reads as a broken
+     scrollbar next to a single row of text. */
+  #list::-webkit-scrollbar-button,#w-detail::-webkit-scrollbar-button{display:none;width:0;height:0}
+
+  .row{
+    display:flex;align-items:center;gap:8px;
+    padding:6px 8px;border-radius:6px;background:transparent;
+    cursor:pointer;text-align:left;border:0;width:100%;color:inherit;
+    font-family:inherit;
+    /* `flex:0 0 auto` is load-bearing, exactly as on #wizard: rows are flex items
+       in a column whose height is measured from them. A shrinkable row is
+       squashed to whatever the list box currently is, so the measurement just
+       echoes the window's own size and the panel can never grow to fit — the
+       list then keeps a few pixels of overflow and paints a scrollbar thumb next
+       to a single row of text. The list itself stays `flex:1;min-height:0` so it
+       still scrolls when the host caps the panel at the screen height. */
+    flex:0 0 auto;
+  }
+  .row:hover{background:rgba(255,255,255,.06)}
+  .pip{width:6px;height:6px;border-radius:50%;flex:0 0 auto;background:rgba(255,255,255,.25)}
+  .row.busy .pip{background:var(--blue);box-shadow:0 0 4px rgba(77,107,254,.8);width:6px;height:6px}
+  .row.failed .pip{background:var(--red)}
+  .row.decision .pip{background:var(--amber)}
+  .row.completed .pip{background:var(--green)}
+  .row.idle .pip{width:5px;height:5px;background:rgba(255,255,255,.25)}
+  .row .title{
+    flex:1 1 auto;min-width:0;font-size:12px;font-weight:500;color:rgba(255,255,255,.9);
+    line-height:16px;
+    /* Upstream clamps the title to two lines (RootView.swift:1024). Two lines are
+       kept via max-height and an ellipsis rather than -webkit-box: the box form
+       measures to zero height inside WebView2's composited surface, which makes
+       the whole title invisible even though it occupies its full width. */
+    max-height:32px;overflow:hidden;text-overflow:ellipsis;
+  }
+  .row .state{font-size:9px;flex:0 0 auto}
+  .row .state.busy{color:var(--blue)}
+  .row .state.completed{color:var(--green);font-weight:500}
+
+  #empty{font-size:11px;color:rgba(255,255,255,.35);padding:6px 0;flex:0 0 auto}
+  #offline{font-size:10px;color:rgba(255,255,255,.28);padding:2px 0 0;flex:0 0 auto}
+
+  /* ---- expanded: AskUserQuestion wizard (Phase 3) ---------------------
+     The action view REPLACES the glance list while a question is pending:
+     upstream renders the action row or the list, never both
+     (RootView.swift:713-733). */
+  /* `flex:0 0 auto` is load-bearing: the panel's height is MEASURED from this
+     element, and a shrinkable flex item reports the shrunken height through
+     scrollHeight — so the measurement would echo the window's current size and
+     the panel would never grow to fit its own content (chips and nav clipped). */
+  #wizard{display:none;flex:0 0 auto;flex-direction:column;gap:10px;min-height:0}
+  body.wizard #wizard{display:flex}
+  body.wizard #badges,body.wizard #list,body.wizard #empty{display:none}
+
+  #answer-error{
+    flex:0 0 auto;color:var(--red);font-size:11px;
+  }
+
+  .w-head{display:flex;align-items:flex-start;gap:8px;flex:0 0 auto}
+  /* The question text is itself a button: clicking it hands the session back to
+     DSH, exactly like clicking a row (RootView.swift:819-827). */
+  .w-title{
+    flex:1 1 auto;min-width:0;text-align:left;background:none;border:0;padding:2px 0;
+    font-weight:600;font-size:14px;line-height:19px;font-family:inherit;
+    color:#fff;cursor:pointer;
+  }
+  .w-title:hover{color:rgba(255,255,255,.75)}
+  .w-counter{flex:0 0 auto;font-size:10px;font-weight:700;color:var(--amber);padding-top:2px}
+
+  /* Markdown detail (NotchMarkdown.swift): 14 pt body, 12 pt mono, 10 pt block
+     spacing. Blocks are laid out with gap rather than margins so the measured
+     content height has no collapsed-margin ambiguity. */
+  #w-detail{
+    display:flex;flex-direction:column;gap:10px;
+    flex:0 0 auto;min-height:0;
+    color:rgba(255,255,255,.9);font-size:14px;line-height:20px;
+    user-select:text;-webkit-user-select:text;
+  }
+  /* A long detail (over 240 characters, the host's own threshold) stops hugging:
+     the window fills the screen and this becomes the scroll area, so the chips
+     below it stay reachable (RootView.swift:657-673).
+     The wizard has to grow to the panel for any of that to work — a flex item
+     is only as tall as its content by default, so without `flex:1` the extra
+     window height just sat empty BELOW the chips and the "scroll area" had
+     nothing to scroll. */
+  body.long-detail #wizard{flex:1 1 auto}
+  body.long-detail #w-detail{flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px}
+  body.long-detail #w-detail::-webkit-scrollbar{width:4px}
+  body.long-detail #w-detail::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:2px}
+  body.long-detail #w-detail::-webkit-scrollbar-track,
+  body.long-detail #w-detail::-webkit-scrollbar-track-piece{background:transparent}
+
+  #w-detail h1,#w-detail h2,#w-detail h3{font-weight:600;color:#fff}
+  #w-detail h1{font-size:18px} #w-detail h2{font-size:16px} #w-detail h3{font-size:15px}
+  #w-detail p{margin:0;color:rgba(255,255,255,.9)}
+  #w-detail ul,#w-detail ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+  #w-detail li{display:flex;gap:8px;align-items:flex-start;line-height:19px}
+  #w-detail .md-marker{flex:0 0 auto;width:18px;text-align:right;color:rgba(255,255,255,.55);font-weight:500}
+  #w-detail code{
+    font-family:"Cascadia Mono",Consolas,monospace;font-size:12px;
+    background:rgba(255,255,255,.1);border-radius:3px;padding:0 3px;
+  }
+  #w-detail pre{
+    font-family:"Cascadia Mono",Consolas,monospace;font-size:12px;line-height:17px;
+    color:rgba(255,255,255,.92);background:rgba(255,255,255,.07);
+    border-radius:8px;padding:10px;white-space:pre-wrap;word-break:break-word;margin:0;
+  }
+  #w-detail blockquote{
+    margin:0;color:rgba(255,255,255,.7);
+    border-left:2px solid rgba(255,255,255,.28);padding-left:10px;
+  }
+  #w-detail hr{height:1px;border:0;background:rgba(255,255,255,.18);margin:0}
+  #w-detail table{border:1px solid rgba(255,255,255,.16);border-radius:8px;border-collapse:separate;
+    border-spacing:0;width:100%;font-size:12px;overflow:hidden}
+  #w-detail th{font-weight:600;color:rgba(255,255,255,.95);text-align:left;
+    padding:5px 6px;border-bottom:1px solid rgba(255,255,255,.2)}
+  #w-detail td{color:rgba(255,255,255,.82);padding:5px 6px}
+  #w-detail td + td,#w-detail th + th{border-left:1px solid rgba(255,255,255,.1)}
+  #w-detail tr + tr td{border-top:1px solid rgba(255,255,255,.08)}
+  /* A link cannot navigate this window — the host cancels any navigation that
+     leaves the virtual host — so it is styled, not followed. */
+  #w-detail .md-a{color:var(--blue);text-decoration:underline}
+
+  #w-chips{display:flex;flex-direction:column;gap:6px;flex:0 0 auto}
+  .chip{
+    display:flex;flex-direction:column;gap:2px;align-items:flex-start;text-align:left;
+    padding:8px 12px;border-radius:8px;background:transparent;
+    border:1px solid rgba(255,255,255,.28);color:#fff;font-family:inherit;cursor:pointer;
+  }
+  .chip:hover{background:rgba(255,255,255,.06)}
+  .chip.on{background:var(--blue);border-color:transparent;color:#000}
+  .chip-label{font-size:14px;font-weight:500;line-height:19px}
+  .chip-desc{font-size:10px;line-height:14px;color:rgba(255,255,255,.55)}
+  .chip.on .chip-desc{color:rgba(0,0,0,.7)}
+
+  .w-input{
+    width:100%;height:36px;padding:0 12px;border-radius:8px;
+    background:var(--field);border:1px solid rgba(255,255,255,.18);
+    color:#fff;font-size:14px;line-height:1;font-family:inherit;outline:none;
+  }
+  .w-input::placeholder{color:rgba(255,255,255,.35)}
+  .w-input:focus{border-color:rgba(255,255,255,.4)}
+
+  #w-nav{display:flex;align-items:center;gap:8px;flex:0 0 auto;padding-top:4px}
+  #w-nav .spacer{flex:1 1 auto}
+  .tiny{
+    font-weight:500;font-size:10px;line-height:1;font-family:inherit;
+    color:rgba(255,255,255,.85);
+    padding:5px 8px;border:0;border-radius:999px;background:rgba(255,255,255,.06);cursor:pointer;
+  }
+  .tiny:hover{background:rgba(255,255,255,.14)}
+  .tiny.blue{background:var(--blue);color:#fff;font-weight:600;padding:5px 9px}
+  .tiny.blue:hover{background:#3f5ce8}
+  .tiny:disabled{opacity:.45;cursor:default}
+</style>
+</head>
+<body class="edge-right">
+  <!-- The vendored idle assets are the upstream demo bundle, and `motions.js`
+       ends with the demo page's own bootstrap (it appends nine cards to `#grid`
+       and mounts ten preview bots). That bootstrap runs at load and would throw
+       on a page without those nodes, which would take the engine's API down with
+       it — so the two containers it expects exist here, empty and inert.
+
+       It also means `document.querySelectorAll('[data-motion]')` mounts a
+       preview bot into any element carrying that attribute, which is why
+       robot-pose.js creates its own host AFTER this bootstrap has run. -->
+  <div id="idle-preview-bootstrap" hidden aria-hidden="true"><section id="grid"></section><section id="dance"></section></div>
+  <div id="shell">    <div id="rest"><canvas id="orbit" width="30" height="20"></canvas></div>
+
+    <div id="panel">
+      <div id="badges">
+        <span class="badge busy" id="badge-busy" hidden><i class="dot"></i><span id="badge-busy-n"></span></span>
+        <span class="badge completed" id="badge-completed" hidden><i class="dot"></i><span id="badge-completed-n"></span></span>
+        <button id="clear" type="button">全部已读</button>
+      </div>
+      <div id="answer-error" hidden></div>
+      <!-- AskUserQuestion wizard (Phase 3). The structure is static and the
+           selected state is synced in place, so typing in the answer field is
+           never interrupted by a re-render. -->
+      <div id="wizard">
+        <div class="w-head">
+          <button class="w-title" id="w-title" type="button" data-no-drag></button>
+          <span class="w-counter" id="w-counter"></span>
+        </div>
+        <div id="w-detail" data-no-drag></div>
+        <div id="w-chips"></div>
+        <div id="w-nav">
+          <button class="tiny" id="w-prev" type="button" data-no-drag>上一题</button>
+          <span class="spacer"></span>
+          <button class="tiny blue" id="w-next" type="button" data-no-drag>下一题</button>
+        </div>
+      </div>
+      <div id="list"></div>
+      <div id="empty">无活跃会话</div>
+      <div id="offline" hidden>等待 Host…</div>
+    </div>
+  </div>
+
+<!-- Phase 5: the idle robot. Both engine files are the upstream
+     tools/idle sources, copied byte-for-byte (see robot-pose.js). -->
+<script src="idle/renderer.js"></script>
+<script src="idle/motions.js"></script>
+<script src="robot-pose.js"></script>
+<script>
+'use strict';
+
+  const host = (window.chrome && window.chrome.webview) ? window.chrome.webview : null;
+
+  // Called through the full path on purpose: detaching a WebView2 host method
+  // from its receiver can throw "Illegal invocation", which would silently kill
+  // every message the page sends.
+  function send(msg) {
+    if (!host) return;
+    try { window.chrome.webview.postMessage(msg); }
+    catch (err) { /* nothing useful to do from inside the page */ }
+  }
+
+  const shell = document.getElementById('shell');
+  const listEl = document.getElementById('list');
+  const emptyEl = document.getElementById('empty');
+  const offlineEl = document.getElementById('offline');
+  const badgeBusy = document.getElementById('badge-busy');
+  const badgeBusyN = document.getElementById('badge-busy-n');
+  const badgeCompleted = document.getElementById('badge-completed');
+  const badgeCompletedN = document.getElementById('badge-completed-n');
+  const badgesEl = document.getElementById('badges');
+  const wizardEl = document.getElementById('wizard');
+  const titleEl = document.getElementById('w-title');
+  const counterEl = document.getElementById('w-counter');
+  const detailEl = document.getElementById('w-detail');
+  const chipsEl = document.getElementById('w-chips');
+  const prevBtn = document.getElementById('w-prev');
+  const nextBtn = document.getElementById('w-next');
+  const errorEl = document.getElementById('answer-error');
+
+  let expanded = false;
+  let settled = true;            // is the window's geometry animation finished?
+  let lastSnapshotAt = 0;
+  let reportedHeight = 0;
+  let lastRows = [];             // newest row list, for re-rendering a wizard step
+
+  /* Everything the host reports is in PHYSICAL pixels (the window is per-monitor
+     DPI aware), while the page lays out in CSS pixels. At 150% scaling those
+     differ by 1.5 — handing the raw window width to `--panel-w` makes the shell
+     240 px too wide on a 480 pt panel, which pushes the left half of every row
+     outside the window's clip and makes the rows look empty. */
+  const toCssPx = (physical, scale) => Math.round(physical / (scale > 0 ? scale : 1));
+
+  /* The same conversion in the other direction, and it is not optional: the
+     host's own fallback estimate is scaled (NotchWindow.EstimateContentHeight),
+     its floor is documented as physical pixels, and the geometry messages report
+     the window in physical pixels. A measurement sent in CSS pixels therefore
+     produces a window exactly 1/scale of the height the content needs — on this
+     150% machine the expanded panel came out 286 px tall for 429 px of content,
+     clipping the bottom third. */
+  let panelScale = 1;
+
+  // ------------------------------------------------------------------
+  // rest: the four-state stroke (Phase 4)
+  // ------------------------------------------------------------------
+
+  /* A port of macos/Sources/StatusOrbit.swift — the whole file — plus the
+     orbit half of RootView.swift's BoardModel (RootView.swift:86-347): which
+     outcome flights are queued, when a reply sends the same task back to the
+     running lamp, and how the four slot weights move while a brush is in the
+     air.
+
+     Units: the page's CSS pixels ARE upstream's points. The HOST converts
+     points into physical pixels through the window size, so every constant
+     below is copied from the Swift verbatim and each comment names the line it
+     came from — this is a port, not a reinterpretation.
+
+     The section between the two `orbit-math` markers is pure arithmetic with no
+     DOM in it, so windows/tests/orbit-math.test.mjs can extract it out of this
+     very file and assert the numbers the page draws with. */
+  const orbit = (() => {
+    // ---- orbit-math:start ------------------------------------------
+    // NotchTokens (RootView.swift:6-41) as the RGB triples StatusOrbit
+    // interpolates between (StatusOrbit.swift:31-41).
+    const BLUE = [0.302, 0.420, 0.996];
+    const GREEN = [0.204, 0.780, 0.349];
+    const RED = [1.000, 0.251, 0.000];
+    const AMBER = [0.949, 1.000, 0.078];
+
+    const clamp01 = (t) => (t < 0 ? 0 : t > 1 ? 1 : t);
+    const mixN = (a, b, t) => a + (b - a) * t;
+    const mixRGB = (a, b, t) => [mixN(a[0], b[0], t), mixN(a[1], b[1], t), mixN(a[2], b[2], t)];
+    /* OrbitMotionFrame.ease (StatusOrbit.swift:144-147). */
+    const ease = (t) => { const x = clamp01(t); return x * x * (3 - 2 * x); };
+    /* IdleInterpolation.smooth (IdleRobot.swift:58-60). */
+    const smooth = (t) => { const x = clamp01(t); return x * x * x * (x * (x * 6 - 15) + 10); };
+
+    const FLIGHT_DURATION = 0.95;                 // StatusFlight.duration (:64)
+    const RETURN_DURATION = 0.98;                 // DecisionMorph.resumeDuration (:312)
+    const SPIN_DURATION = 0.62;                   // DecisionSpin.duration (:297)
+    const RUNNING_VELOCITY = 2 * Math.PI / 3;     // DecisionSpin.runningVelocity (:298)
+    const LAMP_RADIUS = 9.5;
+    /* IdleRobot.swift:293-301 / StatusOrbit.swift:461-464. The robot's last
+       point travels to the rim and BECOMES the pen, so the blue arc's birth
+       waits for the departure and then starts at the pen's own speed. Phase 5
+       wired the robot up, so the wait is upstream's 1.22 s — not zero. */
+    const ROBOT_DEPARTURE = 1.22;
+    const STATUS_BIRTH_BLUE_DRAW = (ROBOT_DEPARTURE - 0.666) * 0.76;         // (:463)
+    const STATUS_BIRTH_PEN_VELOCITY = 2 * Math.PI * 0.70 / STATUS_BIRTH_BLUE_DRAW;  // (:464)
+
+    // ---- OrbitLayout (StatusOrbit.swift:5-29) ----------------------
+    const layout = (top, middle, bottom, decision) => ({ top, middle, bottom, decision });
+    const layTotal = (l) => l.top + l.middle + l.bottom + l.decision;
+    const layHeight = (l) => 20 + 28 * Math.max(0, layTotal(l) - 1);
+    const layMiddleY = (l) => 10 + 28 * (l.top + Math.max(0, l.decision + l.middle - 1));
+    const layBottomY = (l) => layHeight(l) - 10;
+    const layMix = (a, b, t) => layout(
+      mixN(a.top, b.top, t), mixN(a.middle, b.middle, t),
+      mixN(a.bottom, b.bottom, t), mixN(a.decision, b.decision, t));
+
+    /* OrbitLayout.flight (:17-28). While a brush is travelling, the four slot
+       weights move on ONE timeline — that is what keeps the disk positions and
+       the shell height in step (docs/motion-continuity.md:15). */
+    function layFlight(a, b, progress, flight) {
+      const growth = ease(progress / 0.48);
+      const result = layMix(a, b, growth);
+      if (!flight.returnsToRunning) {
+        const source = motionFrame(progress, flight.failed, false, flight.angle).sourceOpacity;
+        // An existing result closes the slot the ink left behind; a NEW result
+        // first needs room for its drawn circle, then releases the source slot.
+        const remaining = flight.destinationBefore > 0 ? source : 1 - ease((progress - 0.72) / 0.28);
+        result.middle = Math.max(a.middle, 1) * remaining;
+      }
+      return result;
+    }
+
+    /* OrbitBrushRoute (:191-268): the brush's route as an arc-length polyline.
+       departure/sourceExit/arrival/resultDrawn/returned are the arc lengths of
+       its five phases. Head and tail are cut from the SAME route, so the stroke
+       never jumps at a phase boundary. Arcs are sampled every 1/96 turn and
+       curves every 1/64, exactly as upstream samples them. */
+    function brushRoute(failed, angle, gap) {
+      if (gap === undefined) gap = 28;
+      const points = [], lengths = [];
+      let total = 0;
+      const append = (x, y) => {
+        const d = points.length
+          ? Math.hypot(x - points[points.length - 1][0], y - points[points.length - 1][1]) : 0;
+        total += d;
+        lengths.push(total);
+        points.push([x, y]);
+      };
+      const arc = (cx, cy, from, sweep, radius) => {
+        for (let i = 0; i <= 96; i++) {
+          const a = from + sweep * i / 96;
+          append(cx + radius * Math.cos(a), cy + radius * Math.sin(a));
+        }
+      };
+      const curve = (from, c1, c2, to) => {
+        for (let i = 1; i <= 64; i++) {
+          const t = i / 64, u = 1 - t;
+          append(u * u * u * from[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * to[0],
+                 u * u * u * from[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * to[1]);
+        }
+      };
+
+      const r = LAMP_RADIUS;
+      const direction = failed ? 1 : -1;     // success flies UP, failure DOWN
+      const y = direction * gap;
+
+      arc(0, 0, angle, 1.4 * Math.PI, r);
+      const departure = total;
+      const exitAngle = failed ? Math.PI / 2 : -Math.PI / 2;
+      const sourceHead = angle + 1.4 * Math.PI;
+      const extra = (exitAngle - sourceHead) % (2 * Math.PI);
+      arc(0, 0, sourceHead, extra < 0 ? extra + 2 * Math.PI : extra, r);
+      const sourceExit = total;
+      const start = points[points.length - 1];
+      curve(start, [start[0] - 4 * Math.sin(exitAngle), start[1] + 4 * Math.cos(exitAngle)],
+            [-r, y + 10], [-r, y]);
+      const arrival = total;
+      arc(0, y, Math.PI, 2 * Math.PI, r);
+      const resultDrawn = total;
+      const finalAngle = angle + FLIGHT_DURATION * 2 * Math.PI / 3;
+      const end = [r * Math.cos(exitAngle), r * Math.sin(exitAngle)];
+      const tail = points[points.length - 1];
+      curve(tail, [-r, y - 10],
+            [end[0] + 4 * Math.sin(exitAngle), end[1] - 4 * Math.cos(exitAngle)], end);
+      const returned = total;
+      const resume = (finalAngle - exitAngle) % (2 * Math.PI);
+      arc(0, 0, exitAngle, (resume < 0 ? resume + 2 * Math.PI : resume) + 1.4 * Math.PI, r);
+
+      return { points, lengths, total, departure, sourceExit, arrival, resultDrawn, returned };
+    }
+
+    /* Route.path(in:) (:231-248) as a polyline, in the route's own coordinates. */
+    function routePoints(route, lo, hi) {
+      const out = [];
+      if (hi - lo <= 0.01) return out;
+      for (let i = 1; i < route.points.length; i++) {
+        const a = route.lengths[i - 1], b = route.lengths[i];
+        if (!(b > a) || b < lo || a > hi) continue;
+        const from = Math.max(a, lo), to = Math.min(b, hi);
+        const at = (d) => {
+          const t = (d - a) / (b - a);
+          const p = route.points[i - 1], q = route.points[i];
+          return [mixN(p[0], q[0], t), mixN(p[1], q[1], t)];
+        };
+        if (out.length === 0) out.push(at(from));
+        out.push(at(to));
+      }
+      return out;
+    }
+
+    /* OrbitMotionFrame.pacedHead (:148-159): one monotone cubic schedule for
+       the non-returning trip, so the head does not restart its velocity at a
+       path boundary. */
+    const PACED_TIMES = [0, 0.18, 0.56, 0.94, 1.0];
+    function pacedHead(t, values) {
+      const slope = (i) => {
+        if (i <= 0 || i >= 4) return 0;
+        const a = (values[i] - values[i - 1]) / (PACED_TIMES[i] - PACED_TIMES[i - 1]);
+        const b = (values[i + 1] - values[i]) / (PACED_TIMES[i + 1] - PACED_TIMES[i]);
+        return a * b > 0 ? 2 * a * b / (a + b) : 0;
+      };
+      let i = 3;
+      for (let k = 0; k < 4; k++) { if (t <= PACED_TIMES[k + 1]) { i = k; break; } }
+      const dt = PACED_TIMES[i + 1] - PACED_TIMES[i];
+      const u = clamp01((t - PACED_TIMES[i]) / dt), u2 = u * u, u3 = u2 * u;
+      return (2 * u3 - 3 * u2 + 1) * values[i] + (u3 - 2 * u2 + u) * dt * slope(i)
+           + (-2 * u3 + 3 * u2) * values[i + 1] + (u3 - u2) * dt * slope(i + 1);
+    }
+
+    /* OrbitMotionFrame (:132-188). `returns` decides whether the brush comes
+       back to the running arc (there is work left) or settles in the outcome
+       slot (that was the last task). */
+    function motionFrame(progress, failed, returns, angle) {
+      const p = clamp01(progress);
+      const route = brushRoute(failed, angle);
+      const end = returns ? route.total : route.resultDrawn + 18;
+      const terminal = LAMP_RADIUS * RUNNING_VELOCITY * FLIGHT_DURATION / (end - route.departure);
+      const paced = (3 * p * p - 2 * p * p * p) + terminal * (p - 3 * p * p + 2 * p * p * p);
+      const head = returns
+        ? route.departure + (end - route.departure) * paced
+        : pacedHead(p, [route.departure, route.sourceExit, route.arrival, route.resultDrawn,
+                        route.resultDrawn + 18]);
+      const distance = Math.min(head, returns ? route.total : route.resultDrawn);
+
+      const outbound = ease((head - route.sourceExit) / (route.arrival - route.sourceExit));
+      const inbound = ease((head - route.resultDrawn + 8) / (route.returned - route.resultDrawn + 16));
+      const tintStart = Math.max(route.departure, route.sourceExit - 8);
+      const outgoingTint = ease((head - tintStart) / (route.arrival + 8 - tintStart));
+      const tint = returns && head > route.resultDrawn - 8 ? 1 - inbound : outgoingTint;
+      const resultOpacity = ease((head - route.arrival - 0.55 * (route.resultDrawn - route.arrival))
+                                 / (0.35 * (route.resultDrawn - route.arrival)));
+      const returning = returns && head > route.resultDrawn;
+      const returned = returns && head >= route.returned;
+      const sourceOpacity = returns ? 1 : 1 - outbound;
+
+      let tailLength;
+      if (head < route.arrival) {
+        tailLength = route.departure + (18 - route.departure) * outbound;
+      } else if (!returns && head > route.resultDrawn) {
+        tailLength = Math.max(0, 18 - (head - route.resultDrawn));
+      } else if (head > route.returned) {
+        const t = (head - route.returned) / (route.total - route.returned);
+        tailLength = 18 + (route.departure - 18) * (3 * t * t - 2 * t * t * t);
+      } else {
+        tailLength = 18;
+      }
+
+      return { progress: p, failed, returns, distance, tailLength, tint, resultOpacity,
+               sourceOpacity, arrived: resultOpacity > 0, returning, returned };
+    }
+
+    /* DecisionReturnFrame (:80-110). A reply takes the same task back to the
+       running lamp, so it owns its own clock. */
+    function returnFrame(progress, angle) {
+      const p = clamp01(progress);
+      const route = brushRoute(false, angle);
+      const u = clamp01((p - 0.14) / 0.86);
+      const span = route.total - route.resultDrawn;
+      const terminal = LAMP_RADIUS * RUNNING_VELOCITY * FLIGHT_DURATION * 0.86 / span;
+      const paced = (3 * u * u - 2 * u * u * u) + terminal * (u * u * u - u * u);
+      const distance = route.resultDrawn + span * paced;
+      const leaving = ease((distance - route.resultDrawn) / Math.max(1, route.returned - route.resultDrawn));
+      const joined = ease((distance - route.returned) / Math.max(1, route.total - route.returned));
+      return {
+        progress: p,
+        distance,
+        tailLength: (2 * Math.PI * LAMP_RADIUS) + (18 - 2 * Math.PI * LAMP_RADIUS) * leaving
+                    + (route.departure - 18) * joined,
+        tint: 1 - leaving,
+        fill: 1 - ease(p / 0.28),
+        strokeOpacity: ease(p / 0.14),
+        countMix: joined,
+        collapse: ease((p - 0.35) / 0.65),
+        baseRingOpacity: 1 - ease((leaving - 0.55) / 0.45),
+      };
+    }
+
+    /* DecisionReturnStroke (:112-130): the same distances, mapped onto the route
+       whose destination gap is the one actually on screen. */
+    function returnStrokePoints(frame, angle, gap) {
+      const route = brushRoute(false, angle, gap);
+      const original = brushRoute(false, angle);
+      const source = [0, original.arrival, original.resultDrawn, original.returned, original.total];
+      const target = [0, route.arrival, route.resultDrawn, route.returned, route.total];
+      const mapped = (d) => {
+        for (let i = 1; i < source.length; i++) {
+          if (d <= source[i]) {
+            return target[i - 1] + (target[i] - target[i - 1]) * (d - source[i - 1])
+                   / Math.max(0.00001, source[i] - source[i - 1]);
+          }
+        }
+        return route.total;
+      };
+      return routePoints(route, mapped(frame.distance - frame.tailLength), mapped(frame.distance));
+    }
+
+    /* OrbitStroke (:270-289): the canonical route's head/tail window mapped onto
+       the route with the real gap. The mapping exists because the destination
+       slot is compressed mid-flight (gap = 28 x the fractional slot weight). */
+    function strokePoints(frame, angle, gap) {
+      const route = brushRoute(frame.failed, angle, gap);
+      const canonical = brushRoute(frame.failed, angle);
+      const source = [0, canonical.departure, canonical.sourceExit, canonical.arrival,
+                      canonical.resultDrawn, canonical.returned, canonical.total];
+      const dest = [0, route.departure, route.sourceExit, route.arrival,
+                    route.resultDrawn, route.returned, route.total];
+      const mapped = (d) => {
+        for (let i = 1; i < source.length; i++) {
+          if (d <= source[i]) {
+            const w = (d - source[i - 1]) / Math.max(0.00001, source[i] - source[i - 1]);
+            return dest[i - 1] + w * (dest[i] - dest[i - 1]);
+          }
+        }
+        return route.total;
+      };
+      return routePoints(route, mapped(Math.max(0, frame.distance - frame.tailLength)),
+                         mapped(frame.distance));
+    }
+
+    /* DecisionSpin (:291-307): one continuous angular velocity over 0.62 s, so
+       decelerating into amber and accelerating back into blue cannot reverse the
+       live rotation. */
+    function spinVelocity(spin, at) {
+      const u = clamp01((at - spin.began - spin.delay) / SPIN_DURATION);
+      return spin.initialVelocity + (spin.finalVelocity - spin.initialVelocity) * (3 * u * u - 2 * u * u * u);
+    }
+    function spinPosition(spin, at) {
+      const elapsed = Math.max(0, at - spin.began - spin.delay);
+      const t = Math.min(elapsed, SPIN_DURATION), u = t / SPIN_DURATION;
+      return spin.angle + spin.initialVelocity * t
+           + (spin.finalVelocity - spin.initialVelocity) * SPIN_DURATION * (u * u * u - 0.5 * u * u * u * u)
+           + spin.finalVelocity * Math.max(0, elapsed - SPIN_DURATION);
+    }
+
+    /* DecisionMorph (:308-323) and DecisionClosing (:325-332): the solo
+       blue <-> amber exchange. Clearing/flipping comes first, then the pen draws
+       the incoming stroke at a velocity that lands on the running speed. */
+    const CLEAR_FRACTION = 0.28 / RETURN_DURATION;
+    function decisionMorph(amount) {
+      const q = clamp01(amount), p = 1 - q;
+      const u = clamp01((p - CLEAR_FRACTION) / (1 - CLEAR_FRACTION));
+      const terminal = RUNNING_VELOCITY * (RETURN_DURATION - 0.28) / (2 * Math.PI * 0.70);
+      const draw = (2 - terminal) * u + (2 * terminal - 2) * (u * u * u - 0.5 * u * u * u * u);
+      return { draw,
+               fill: 1 - smooth((p - 0.02) / (CLEAR_FRACTION - 0.02)),
+               flip: 1 - smooth(p / CLEAR_FRACTION),
+               trim: 0.70 * draw };
+    }
+    function decisionClosing(amount) {
+      return { trim: 0.70 + 0.30 * smooth(amount / 0.5),
+               fill: smooth((amount - 0.50) / 0.38),
+               tint: smooth((amount - 0.24) / 0.55),
+               flip: smooth((amount - 0.62) / 0.38) };
+    }
+
+    /* StatusSeparation (:427-431): two 19 pt disks plus their stroke allowance
+       must not touch, so a lamp fades out as a neighbour comes within 28 pt. */
+    const separationOpacity = (weight, distance) => weight * smooth((distance - 20) / 8);
+    // ---- orbit-math:end --------------------------------------------
+
+    const canvas = document.getElementById('orbit');
+    const ctx = canvas.getContext('2d');
+
+    const col = (c, a) => 'rgba(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255)
+      + ',' + Math.round(c[2] * 255) + ',' + (a === undefined ? 1 : a) + ')';
+
+    /* The renderer hands the body fill over as `#rrggbb` (the SVG attribute), and
+       the departure's colour handoff re-expresses it as `rgba(...)`. Both forms
+       occur, because the robot's own pixel probe matches against whatever was
+       painted last. */
+    const hexRGB = (value, fallback) => {
+      if (typeof value === 'string') {
+        const m = /^#([0-9a-f]{6})$/i.exec(value);
+        if (m) {
+          const n = parseInt(m[1], 16);
+          return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+        }
+        const rgba = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i.exec(value);
+        if (rgba) return [+rgba[1] / 255, +rgba[2] / 255, +rgba[3] / 255];
+      }
+      return fallback;
+    };
+
+    // ---- presentation clock -----------------------------------------
+    /* Flights own their clock: polling and folding must not restart their ink.
+       The probe can PIN it to an exact instant, which is upstream's `renderDate`
+       (StatusOrbit.swift:499) and is what makes a captured frame or a self-test
+       frame reproducible. */
+    let pinned = null;
+    const realNow = () => performance.now() / 1000;
+    const now = () => (pinned !== null ? pinned : realNow());
+
+    /* `RobotDeparture.duration` and `StatusBirth.blueDrawDuration` — the pen
+       waits for the robot's own sequence, so these two must come from the same
+       file (StatusOrbit.swift:463). */
+    const DEPARTURE_DURATION = 1.22;
+
+    // ---- model (RootView.swift:86-347, the orbit half) --------------
+    const model = {
+      layout: layout(0, 0, 0, 0),
+      from: layout(0, 0, 0, 0),
+      target: layout(0, 0, 0, 0),
+      layoutBegan: 0,
+      layoutFlightId: null,
+      layoutActive: false,
+      flight: null,
+      reply: null,
+      pendingReply: null,        // upstream pendingDecisionReturnCount
+      pendingFlights: [],
+      spin: null,
+      retainedBusy: 0,
+      retainedSuccess: 0,
+      retainedFailure: 0,
+      rows: [],
+      previousBusyIds: new Set(),
+      initialized: false,
+      motion: true,              // the host's "animations allowed" flag
+      probeReduce: false,        // page-local override, used by the self-test
+      probeSoloRobot: false,     // page-local: draw the robot with no status ink
+    };
+
+    const reduced = () => !model.motion || model.probeReduce;
+    const busyCount = () => model.rows.filter(r => r.busy && !r.needsAction).length;
+    const completedUnread = () => model.rows.filter(r => r.unread && !r.busy
+      && !(r.lastTurn && r.lastTurn.failed) && !r.needsAction).length;
+    const failedRows = () => model.rows.filter(r => r.failed);
+    const needsAction = () => model.rows.some(r => r.needsAction);
+    const orbitBusyCount = () => (model.pendingReply !== null ? model.pendingReply : busyCount());
+
+    /* The engine (Assets/notch/robot-pose.js) publishes everything on
+       `window.NotchRobot` rather than as stray globals, so the page destructures
+       what it uses — and fails loudly here if the engine did not load. */
+    const { RobotPose, RobotDirector, departure, statusBirth } = window.NotchRobot || {};
+    if (typeof RobotPose !== 'object' || typeof RobotDirector !== 'function') {
+      throw new Error('robot-pose.js did not load (Assets/notch/robot-pose.js)');
+    }
+
+    // ---- the idle robot (Phase 5) ------------------------------------
+    /* `BoardModel.showsIdleRobot` (RootView.swift:138-140) verbatim: the robot
+       is only on screen once every lamp has actually LEFT the layout, not when
+       the last row merely cleared — a poll with no busy/unread rows must not
+       start the arrival on top of green + blue. */
+    const showsRobot = () => layTotal(model.layout) < 0.0001
+      && busyCount() === 0 && completedUnread() === 0 && failedRows().length === 0 && !needsAction()
+      && !model.flight && !model.reply;
+
+    /* `IdlePresence` (IdleRobot.swift:303-378): the robot leaves as a shrinking
+       silhouette whose final point becomes the status pen (1.22 s, owned by
+       StatusBirth) and arrives by expanding out of a ring (1.05 s). */
+    const robot = {
+      idle: null,             // null until the first frame decides
+      visibility: 1,
+      entryVisibility: 0,
+      entry: true,
+      entryAt: 0,
+      entryFrom: null,
+      depart: false,
+      departAt: 0,
+      departFrom: null,
+      since: 0,              // clock base at the last edge, for a pinned clock
+      live: false,           // is the director clock driving the visible pose?
+      display: null,
+      previous: null,
+      lastStatus: BLUE,      // the colour the arrival expands out of
+      reason: 'init',
+    };
+
+    /* The scheduler (`IdleDirector`, IdleRobot.swift:79-203) is created up
+       front but only runs while the robot is on screen; the SVG renderer behind
+       it is initialised lazily so a page served without the idle assets still
+       paints the status lamps. */
+    const director = new RobotDirector(now);
+
+    const robotWants = () => showsRobot() || robot.depart || robot.visibility < 1;
+
+    /* Where the arrival starts from: the departing silhouette if the robot was
+       interrupted on its way out, otherwise whatever the director is showing. */
+    const livePose = (at) => director.displayPose(at) || director.neutralFallback();
+
+    /* `presence.set` (IdleRobot.swift:332-376) against the page clock.
+       The DEPARTURE clock is deliberately not started here: it belongs to the
+       layout, because the pen waits for that same 1.22 s sequence and the two
+       must not drift apart (`robotAdvance`). */
+    function robotSet(idle, at) {
+      const t = at === undefined ? now() : at;
+      if (idle) {
+        robot.reason = 'arrive';
+        robot.entryFrom = robot.display || livePose(t);
+        robot.entryAt = t;
+        robot.entryVisibility = robot.visibility;
+        robot.entry = true;
+        robot.depart = false;
+        robot.live = true;
+        /* The scheduler only runs while the robot is on screen
+           (`IdleDirector.start`, IdleRobot.swift:145). */
+        director.start(true);
+      } else {
+        robot.reason = 'depart';
+        robot.departFrom = robot.display || livePose(t);
+        robot.display = robot.departFrom;
+        robot.depart = true;
+        robot.live = false;
+      }
+    }
+
+    /* One frame of the presence machine: the departure/arrival clock, the live
+       robot clock, and the status colour the arrival opens out of. `t` is passed
+       in rather than read here so a pinned clock reaches the presence machine
+       without the two ever disagreeing. */
+    function robotAdvance(t) {
+      const idle = showsRobot();
+      director.setReduce(reduced());
+      /* The scheduler runs only while the robot can be looked at; it is cheap to
+         leave running, but a stopped director must come back when Reduce Motion
+         is switched off again rather than staying frozen at a neutral pose. */
+      if (idle && !reduced() && !director.running) director.start(true);
+
+      /* `presence.returnColor` (IdleRobot.swift:418): the arrival opens out of
+         the colour of the lamp it is replacing. */
+      if (layTotal(model.layout) > 0.0001) {
+        robot.lastStatus = failedRows().length ? RED
+          : completedUnread() > 0 ? GREEN
+            : needsAction() ? AMBER
+              : busyCount() > 0 ? BLUE : robot.lastStatus;
+      }
+
+      /* The edge, and where the departure clock starts: exactly when the lamp
+         appears, because that instant is what StatusBirth is measured from
+         (StatusOrbit.swift:461). A pinned clock has no absolute base to record,
+         so the offset is kept instead. */
+      if (idle !== robot.idle) {
+        if (robot.idle === null) {
+          robot.idle = idle;
+          if (idle) {
+            robot.visibility = 1;
+            robot.live = true;
+            robot.reason = 'startup';
+          }
+        } else {
+          robot.idle = idle;
+          if (!idle) {
+            const from = model.flight ? model.flight.startedAt : t;
+            robot.since = pinned === null ? 0 : from;
+            robot.departAt = from;
+            robotSet(idle, from);
+          }
+        }
+      }
+
+      /* The robot's own scheduler (blink / the nine gestures / dance). It keeps
+         running through the departure, because the shrinking silhouette is the
+         robot's own artwork and must not freeze. */
+      if (robot.live) {
+        robot.previous = robot.display;
+        robot.display = idle ? director.displayPose(t) : livePose(t);
+      }
+
+      if (reduced()) {
+        robot.visibility = idle ? 1 : 0;
+        if (robot.depart) {
+          robot.depart = false;
+          robot.display = idle ? livePose(t) : null;
+          robot.previous = null;
+        }
+        return t;
+      }
+
+      if (robot.depart) {
+        const progress = clamp01((t - robot.departAt) / DEPARTURE_DURATION);
+        if (idle && progress >= 0.61) {
+          /* Reversed mid-flight: keep the geometry it had reached and let
+             `robotSet` start the arrival from there (IdleRobot.swift:334). */
+          robot.depart = false;
+          robot.visibility = 0;
+          robotSet(true, t);
+        } else if (!idle && progress < 1) {
+          /* The tiny point: the silhouette shrinks to nothing and the ink hands
+             over to the outgoing status colour (RobotDeparture, :293-301). */
+          robot.visibility = 0;
+        }
+      }
+
+      if (idle) {
+        const progress = clamp01((t - robot.entryAt) / 1.05);
+        robot.visibility = robot.entryVisibility + (1 - robot.entryVisibility) * smooth(progress / 0.32);
+        if (!robot.live) { robot.live = true; robot.display = livePose(t); }
+        if (robot.visibility >= 1 && robot.reason !== 'idle') robot.reason = 'idle';
+      } else {
+        robot.visibility = 0;
+        if (robot.depart && clamp01((t - robot.departAt) / DEPARTURE_DURATION) >= 1) {
+          robot.depart = false;
+          robot.display = null;
+          robot.previous = null;
+          robot.reason = 'status';
+        }
+      }
+      return t;
+    }
+
+    /* The robot's ink at this instant: geometry from `RobotDeparture`, ink from
+       the outgoing status, so the tiny point hands the pen its own colour.
+       The alpha gate only applies to the ARRIVAL: while departing, the robot's
+       opacity is the departure curve's own channel (`RobotDeparture.opacity`),
+       and `robot.visibility` is deliberately 0 through it (the status, not the
+       robot, owns the screen from that point on). */
+    function robotVisual(t) {
+      if (!robot.display) return null;
+      if (!robot.depart) {
+        if (robot.visibility <= 0.001) return null;
+        return { pose: robot.display, scale: 1, alpha: robot.visibility, color: null, depart: null };
+      }
+      const d = departure((t - robot.departAt) / DEPARTURE_DURATION);
+      if (d.progress >= 1) return null;
+      return { pose: robot.display, scale: d.scale, alpha: d.opacity, color: d.colorMix, depart: d };
+    }
+
+    /* One complete step of the page's presentation clock. Everything the status
+       lamps and the robot do hangs off this, so the real frame loop and the
+       probe's pinned clock cannot diverge. */
+    function robotStep(t) {
+      director.tick(t);
+      tickLayout(t);
+      robotAdvance(t);
+      render();
+    }
+
+    // ---- frames ------------------------------------------------------
+    let frameHandle = 0, finishTimer = 0, held = false;
+
+    const spinActive = () => !!model.spin && (now() - model.spin.began) < SPIN_DURATION + model.spin.delay;
+    /* "Is the LAYOUT moving": a flight, a reply, or a slot mix. The spin is a
+       separate channel — it turns the running arc but cannot change the pill's
+       height — and `report()` sends this flag, so the host only takes the height
+       over while there is really a height to follow. */
+    const animating = () => !!(model.flight || model.reply || model.layoutActive);
+    const closingDecision = () => model.target.decision > 0 && model.from.middle > 0;
+
+    /* Upstream pauses its TimelineView only when nothing can be moving
+       (StatusOrbit.swift:524): a running lamp keeps rotating at 60 fps, a
+       settled amber one does not. The Phase 5 robot is the other clock that
+       keeps the pill awake (a blink, a hop or a natural eyelid). */
+    function wanted() {
+      if (reduced()) return false;
+      if (robot.depart || robot.visibility < 1) return true;
+      if (showsRobot()) return true;
+      return busyCount() > 0 || !!model.flight || spinActive() || !!model.reply || model.layoutActive;
+    }
+
+    /* One frame: advance the layout (the same job upstream's 60 fps Timer does,
+       RootView.swift:326-328), advance the robot, and then paint it. Skipping
+       the tick would leave the four slot weights frozen while the brush itself
+       still moved on the clock — the pill would keep its old height for the
+       whole flight. */
+    function pump() {
+      frameHandle = 0;
+      const t = now();
+      robotStep(t);
+      if (wanted()) frameHandle = requestAnimationFrame(pump);
+    }
+    function wake() {
+      if (!frameHandle) frameHandle = requestAnimationFrame(pump);
+    }
+
+    /* The host resizes the window from the height reported above, so the canvas
+       box changes after the paint that reported it. Without this the pill would
+       keep drawing its stack centred for the OLD box until something else
+       happened to repaint — most visible with Reduce Motion, where there is no
+       frame loop running at all. */
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(() => { robot.resizes = (robot.resizes || 0) + 1; render(); }).observe(canvas);
+    }
+
+    /* The flight/reply completion clock. Upstream awaits a Task.sleep; the
+       probe can hold it so a frame can be captured at an exact phase. */
+    function armFinish(seconds, fn) {
+      clearTimeout(finishTimer);
+      finishTimer = 0;
+      if (held) return;
+      finishTimer = setTimeout(() => { finishTimer = 0; fn(); wake(); }, Math.max(0, seconds * 1000) + 8);
+    }
+
+    const decisionAngle = (at) => (model.spin ? spinPosition(model.spin, at) : at * RUNNING_VELOCITY);
+    const decisionVelocity = (at) => (model.spin ? spinVelocity(model.spin, at) : RUNNING_VELOCITY);
+
+    // ---- the state machine (RootView.swift:182-347) -----------------
+    function differs(a, b) {
+      return Math.abs(a.top - b.top) > 0.0001 || Math.abs(a.middle - b.middle) > 0.0001
+          || Math.abs(a.bottom - b.bottom) > 0.0001 || Math.abs(a.decision - b.decision) > 0.0001;
+    }
+
+    function startNextFlight() {
+      if (model.flight || model.reply || model.pendingReply !== null || model.pendingFlights.length === 0) return;
+      const next = model.pendingFlights.shift();
+      const flight = {
+        outcome: next.outcome, failed: next.failed, decision: next.decision,
+        busyBefore: next.busyBefore, destinationBefore: next.destinationBefore,
+        startedAt: now(), returnsToRunning: busyCount() > 0,
+        angle: decisionAngle(now()),
+      };
+      model.spin = { began: flight.startedAt, angle: flight.angle,
+                     initialVelocity: RUNNING_VELOCITY, finalVelocity: RUNNING_VELOCITY, delay: 0 };
+      model.flight = flight;
+      armFinish(FLIGHT_DURATION, () => finishFlight(flight));
+      wake();
+    }
+
+    function finishFlight(flight) {
+      if (model.flight !== flight) return;
+      tickLayout(flight.startedAt + FLIGHT_DURATION);
+      model.flight = null;
+      startReplyIfPossible();
+      startNextFlight();
+      updateLayout(now(), true);
+    }
+
+    function startReplyIfPossible() {
+      if (model.flight || model.reply || model.pendingReply === null) return;
+      const count = model.pendingReply;
+      model.pendingReply = null;
+      // A reply only exists while amber is on screen and work remains.
+      if (needsAction() || busyCount() === 0 || model.layout.decision <= 0.001) return;
+
+      const at = now();
+      // The panel is folding for 0.4 s (NotchGeometryAnimation.duration); the
+      // reply's clock waits for it, or the stroke would be invisible
+      // (docs/motion-continuity.md:47).
+      const began = at + (expanded ? 0.4 : 0);
+      const travelling = model.layout.middle > 0.001 || model.layout.top > 0.001;
+      const startAngle = travelling ? decisionAngle(began) : -Math.PI / 2;
+      const reply = {
+        startedAt: began, busyBefore: count, from: model.layout, angle: startAngle, travelling,
+        duration: travelling ? FLIGHT_DURATION : RETURN_DURATION,
+        progress: (t) => Math.min(1, Math.max(0, (t - began) / (travelling ? FLIGHT_DURATION : RETURN_DURATION))),
+      };
+      model.reply = reply;
+      model.spin = { began, angle: startAngle, initialVelocity: RUNNING_VELOCITY,
+                     finalVelocity: RUNNING_VELOCITY, delay: travelling ? 0 : reply.duration };
+      armFinish((began - at) + reply.duration, () => finishReply(reply));
+      wake();
+    }
+
+    function finishReply(reply) {
+      if (model.reply !== reply) return;
+      tickLayout(reply.startedAt + reply.duration);
+      model.reply = null;
+      model.retainedBusy = busyCount();
+      startNextFlight();
+      updateLayout(now(), true);
+    }
+
+    function updateLayout(at, animateBirth) {
+      const t = at === undefined ? now() : at;
+      const target = layout(completedUnread() > 0 ? 1 : 0, busyCount() > 0 ? 1 : 0,
+                            failedRows().length ? 1 : 0, needsAction() ? 1 : 0);
+      if (busyCount() > 0 && model.reply === null && model.pendingReply === null) model.retainedBusy = busyCount();
+      if (completedUnread() > 0) model.retainedSuccess = completedUnread();
+      if (failedRows().length) model.retainedFailure = failedRows().length;
+      // A fast reply is queued behind the outgoing amber stroke: its target is
+      // kept until the stroke has arrived, instead of changing the path under
+      // the pen (RootView.swift:310-312).
+      if (model.pendingReply !== null && model.flight && model.flight.decision) return;
+
+      const presentationId = model.reply ? 'reply' : (model.flight ? 'flight' : null);
+      if (!differs(target, model.target) && presentationId === model.layoutFlightId) return;
+
+      if (model.reply === null && (target.decision !== model.target.decision
+          || target.middle !== model.target.middle)) {
+        const birth = animateBirth && layTotal(model.layout) < 0.0001;
+        const fromSolid = model.layout.decision >= 0.9999 && model.layout.middle < 0.0001;
+        const resetPen = birth || (fromSolid && target.middle > 0);
+        const running = target.middle > 0;
+        /* RootView.swift:320-321 verbatim — and the BIRTH branch is Phase 5's
+           whole handoff: the pen is parked for the robot's full 1.22 s
+           (DecisionSpin.position integrates only after `delay`), holding the
+           angle the departure's tiny point left it at, so the arc cannot start
+           before the robot's last point has arrived at the rim. */
+        const penVelocity = birth && running
+          ? STATUS_BIRTH_PEN_VELOCITY
+          : (fromSolid && running ? RUNNING_VELOCITY : 0);
+        model.spin = {
+          began: t,
+          angle: resetPen ? -Math.PI / 2 : decisionAngle(t),
+          initialVelocity: resetPen ? penVelocity : decisionVelocity(t),
+          finalVelocity: (target.decision > 0 && target.middle === 0) ? 0 : RUNNING_VELOCITY,
+          delay: birth ? ROBOT_DEPARTURE : (fromSolid ? RETURN_DURATION : 0),
+        };
+      }
+
+      model.from = model.layout;
+      model.target = target;
+      model.layoutBegan = t;
+      model.layoutFlightId = presentationId;
+      model.layoutActive = !reduced();
+      if (reduced()) {
+        model.layout = target;
+        model.layoutActive = false;
+        return;
+      }
+      wake();
+    }
+
+    function tickLayout(at) {
+      const t = at === undefined ? now() : at;
+      if (model.reply) {
+        const p = model.reply.progress(t);
+        const frame = returnFrame(p, model.reply.angle);
+        model.layout = layMix(model.reply.from, model.target, model.reply.travelling ? frame.collapse : p);
+        if (p >= 1) model.retainedBusy = busyCount();
+      } else if (model.flight) {
+        model.layout = layFlight(model.from, model.target,
+          clamp01((t - model.flight.startedAt) / FLIGHT_DURATION), model.flight);
+      } else if (model.layoutActive) {
+        const resuming = model.from.decision >= 0.9999 && model.from.middle < 0.0001 && model.target.middle > 0;
+        const closing = closingDecision();
+        const duration = resuming ? RETURN_DURATION
+          : (closing ? 0.82
+            : (layTotal(model.target) === 0 ? 0.82
+              : ((model.from.decision !== model.target.decision
+                  && model.from.middle !== model.target.middle) ? SPIN_DURATION : 0.42)));
+        if (!differs(model.from, model.target)) {
+          // A re-target onto the layout the flight already landed on: there is
+          // nothing to animate, and the settled height has to be REPORTED at once
+          // rather than at the end of a pointless 0.42 s mix — that is the value
+          // the window's own geometry ends up resting on.
+          model.layout = model.target;
+          model.layoutActive = false;
+        } else {
+          const p = clamp01((t - model.layoutBegan) / duration);
+          model.layout = layMix(model.from, model.target, (resuming || closing) ? p : smooth(p));
+          if (p >= 1) model.layoutActive = false;
+        }
+      }
+      // A slot that has closed keeps no count (RootView.swift:345-346).
+      if (model.layout.top === 0) model.retainedSuccess = 0;
+      if (model.layout.bottom === 0) model.retainedFailure = 0;
+    }
+
+    /* BoardModel.applySnapshot (RootView.swift:182-244), orbit half. The host
+       pushes complete snapshots, so the model derives everything from the rows
+       exactly as the Swift model does — including which rows were RUNNING in
+       the previous frame, which is what an outcome flight is started from. */
+    function snapshot(rows) {
+      const cold = !model.initialized;
+      const beforeBusy = busyCount();
+      const beforeSuccess = completedUnread();
+      const beforeFailure = failedRows().length;
+      const previousBusyIds = model.previousBusyIds;
+      const finished = model.initialized
+        ? rows.filter(r => previousBusyIds.has(r.id) && !r.busy && !r.needsAction && (r.unread || r.failed))
+        : [];
+      model.previousBusyIds = new Set(rows.filter(r => r.busy).map(r => r.id));
+      model.initialized = true;
+
+      const wasAwaiting = needsAction();
+      const previousActionIds = new Set(model.rows.filter(r => r.needsAction).map(r => r.id));
+      model.rows = rows;
+
+      const introducedDecision = needsAction() && !wasAwaiting && beforeBusy > 0;
+      const resumedDecision = wasAwaiting && !needsAction()
+        && rows.some(r => previousActionIds.has(r.id) && r.busy && !r.needsAction);
+      if (resumedDecision && !reduced()) {
+        model.pendingReply = beforeBusy;
+        model.retainedBusy = beforeBusy;
+      }
+      if (needsAction() || busyCount() === 0) {
+        if (model.reply) {
+          tickLayout();
+          model.retainedBusy = model.reply.busyBefore;
+          model.reply = null;
+          clearTimeout(finishTimer);
+          finishTimer = 0;
+        }
+        model.pendingReply = null;
+      }
+      if (!needsAction()) model.pendingFlights = model.pendingFlights.filter(f => !f.decision);
+      if (reduced()) {
+        updateLayout(now(), !cold);
+        render();
+        return;
+      }
+
+      // One flight per outcome per frame, coalesced: two tasks finishing in the
+      // same snapshot share one stroke (STATUS-MOTION.md:5).
+      for (const failed of [false, true]) {
+        if (!finished.some(r => !!r.failed === failed)) continue;
+        if (model.pendingFlights.some(f => !f.decision && f.failed === failed)) continue;
+        model.pendingFlights.push({ outcome: failed ? 'failure' : 'success', failed,
+                                    decision: false, busyBefore: beforeBusy,
+                                    destinationBefore: failed ? beforeFailure : beforeSuccess });
+      }
+      if (introducedDecision) {
+        model.pendingFlights.push({ outcome: 'decision', failed: false, decision: true,
+                                    busyBefore: beforeBusy, destinationBefore: 0 });
+      }
+      // Everything is clear: nothing may still be in the air.
+      if (busyCount() === 0 && completedUnread() === 0 && failedRows().length === 0 && !needsAction()) {
+        model.pendingFlights = [];
+        model.flight = null;
+        model.reply = null;
+        model.pendingReply = null;
+        clearTimeout(finishTimer);
+        finishTimer = 0;
+      }
+
+      startReplyIfPossible();
+      startNextFlight();
+      updateLayout(now(), !cold);
+      render();
+    }
+
+    // ---- renderer (StatusOrbitView, StatusOrbit.swift:495-641) ------
+    let dpr = 1;
+
+    function drawInk(text, cx, cy, colour, alpha) {
+      const m = glyphMetrics(text);
+      ctx.save();
+      ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+      ctx.translate(cx, cy);
+      ctx.scale(m.scale, m.scale);
+      ctx.font = glyphFont(10);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = colour;
+      ctx.fillText(text, m.bx, m.by);
+      ctx.restore();
+    }
+
+    function glyphFont(size) {
+      return '700 ' + size + 'px "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif';
+    }
+
+    /* CenteredStatusGlyph (StatusOrbit.swift:335-372): the numeral is placed by
+       its INK box, not by the font's line box, and multi-digit outlines are
+       fitted to the same 12 pt width. The exclamation point additionally gets an
+       optical correction, because its heavy upper stem puts more ink mass above
+       the middle than below (docs/motion-continuity.md:76-77). macOS fills
+       CoreText outlines; a canvas can measure and fill the same way, so the
+       numbers below come from the real glyph. */
+    const glyphCache = new Map();
+    function glyphMetrics(text) {
+      let m = glyphCache.get(text);
+      if (m) return m;
+
+      const probe = document.createElement('canvas');
+      probe.width = probe.height = 96;
+      const pc = probe.getContext('2d');
+      pc.font = glyphFont(30);
+      pc.textAlign = 'left';
+      pc.textBaseline = 'alphabetic';
+      pc.fillStyle = '#fff';
+      pc.fillText(text, 24, 48);
+
+      const data = pc.getImageData(0, 0, 96, 96).data;
+      let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9, mass = 0, massY = 0;
+      for (let y = 0; y < 96; y++) {
+        for (let x = 0; x < 96; x++) {
+          const a = data[(y * 96 + x) * 4 + 3] / 255;
+          if (a <= 0.02) continue;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+          mass += a;
+          massY += a * y;
+        }
+      }
+
+      const inkWidth = (maxX - minX + 1) / 3;
+      const boundCentreX = ((minX + maxX + 1) / 2 - 24) / 3;
+      const boundCentreY = ((minY + maxY + 1) / 2 - 48) / 3;
+      const massCentreY = mass > 0 ? (massY / mass - 48) / 3 : boundCentreY;
+      m = {
+        scale: Math.min(1, 12 / Math.max(0.001, inkWidth)),
+        bx: -boundCentreX,
+        by: text === '!' ? -massCentreY : -boundCentreY,
+        inkWidth,
+      };
+      glyphCache.set(text, m);
+      return m;
+    }
+
+    function disk(cx, cy, radius, colour, alpha) {
+      if (alpha <= 0.001) return;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      ctx.arc(cx, cy, Math.max(0.1, radius), 0, 2 * Math.PI);
+      ctx.fillStyle = col(colour);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function ring(cx, cy, radius, colour, width, alpha) {
+      if (alpha <= 0.001) return;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+      ctx.strokeStyle = col(colour);
+      ctx.lineWidth = width;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function arcStroke(cx, cy, radius, from, sweep, colour, width, alpha) {
+      if (alpha <= 0.001 || Math.abs(sweep) < 0.0001) return;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, from, from + sweep);
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = width;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function strokeRoute(points, ox, oy, style, alpha) {
+      if (points.length < 2) return;
+      ctx.save();
+      ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+      ctx.beginPath();
+      ctx.moveTo(points[0][0] + ox, points[0][1] + oy);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0] + ox, points[i][1] + oy);
+      ctx.strokeStyle = style;
+      ctx.lineWidth = 1.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    /* statusDisk (:634-641): a solid 19 pt disk with the count inside it. Green
+       takes a black numeral, red a white one. */
+    function drawStatusDisk(cx, cy, count, colour, numeral, opacity) {
+      if (opacity <= 0.001 || count <= 0) return;
+      disk(cx, cy, LAMP_RADIUS, colour, opacity);
+      drawInk(String(count), cx, cy, col(numeral), opacity);
+    }
+
+    /* DecisionFlipGlyph (:375-409): two halves hinge at the glyph's equator, like
+       a split-flap calendar. progress 0 = numeral, 1 = exclamation point. */
+    function drawFlipGlyph(cx, cy, number, progress, colour, alpha) {
+      if (alpha <= 0.001) return;
+      const size = 19, h = size / 2, w = size;
+      const half = (text, top, scale, exposed) => {
+        if (scale <= 0.001) return;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(cx, cy);
+        if (exposed !== undefined) {
+          ctx.beginPath();
+          ctx.rect(-w / 2, top ? -h : exposed, w, Math.max(0, h - exposed));
+          ctx.clip();
+        }
+        ctx.scale(1, scale);
+        ctx.beginPath();
+        ctx.rect(-w / 2, top ? -h : 0, w, h);
+        ctx.clip();
+        drawInk(text, 0, 0, colour, 1);
+        ctx.restore();
+      };
+      if (progress < 0.5) {
+        const scale = Math.max(0, Math.cos(Math.PI * progress));
+        half('!', true, 1, h * scale);
+        half(String(number), false, 1);
+        half(String(number), true, scale);
+      } else {
+        const scale = Math.max(0, Math.cos(Math.PI * (1 - progress)));
+        half('!', true, 1);
+        half(String(number), false, 1, h * scale);
+        half('!', false, scale);
+      }
+    }
+
+    /* DecisionDissolveGlyph (:411-424): the two glyphs cross-fade in place. */
+    function drawDissolveGlyph(cx, cy, number, progress, colour, alpha) {
+      const t = clamp01(progress);
+      if (t < 0.999) drawInk(String(number), cx, cy, colour, (1 - t) * alpha);
+      if (t > 0.001) drawInk('!', cx, cy, colour, t * alpha);
+    }
+
+    /* WorkingDecisionGlyph (:433-458): the solo blue <-> amber exchange. Only one
+       glyph exists, so the arc closing and the fill growing are the same
+       progress. The numeral/exclamation is NOT faded out as the disk fills: its
+       COLOUR is multiplied towards black (:447, :454), which is what keeps it
+       legible on top of the amber — an alpha fade would erase it exactly when the
+       lamp is supposed to read as a settled decision. */
+    function drawWorkingDecision(cx, cy, amount, number, angle, closing) {
+      const m = decisionMorph(amount);
+      const closed = decisionClosing(amount);
+      if (closing) {
+        const ink = mixRGB(BLUE, AMBER, closed.tint);
+        disk(cx, cy, LAMP_RADIUS * closed.fill, ink, 1);
+        arcStroke(cx, cy, LAMP_RADIUS, angle, closed.trim * 2 * Math.PI, col(ink), 1.5, 1);
+        drawDissolveGlyph(cx, cy, number, closed.flip,
+                          col(mixRGB([0, 0, 0], ink, 1 - closed.fill)), 1);
+        return;
+      }
+      disk(cx, cy, LAMP_RADIUS, AMBER, m.fill);
+      ring(cx, cy, LAMP_RADIUS, AMBER, 1.5, m.fill);
+      arcStroke(cx, cy, LAMP_RADIUS, angle, m.trim * 2 * Math.PI, col(BLUE), 1.5,
+                Math.min(1, m.draw / 0.03));
+      drawDissolveGlyph(cx, cy, number, m.flip, col(mixRGB([0, 0, 0], BLUE, 1 - m.fill)), 1);
+    }
+
+    /* The running lamp (:562-586): a 15 pt black disk that occludes a returning
+       trail, a 70 % blue arc rotating on the 9.5 pt rim, and the count. */
+    function drawRunningDisk(cx, cy, angle, flight, motion, reply, replyFrame) {
+      const alpha = model.layout.middle;
+      if (alpha <= 0.001) return;
+      const blackAlpha = (flight && !flight.returnsToRunning && motion ? motion.sourceOpacity : 1) * alpha;
+      disk(cx, cy, 7.5, [0, 0, 0], blackAlpha);
+
+      if (!flight && busyCount() > 0 && (reply === null || reply.busyBefore > 0)) {
+        const ringAlpha = (replyFrame ? replyFrame.baseRingOpacity : 1) * alpha;
+        arcStroke(cx, cy, LAMP_RADIUS, reduced() ? 0 : angle, 0.70 * 2 * Math.PI, col(BLUE), 1.5, ringAlpha);
+      }
+
+      if (reply && replyFrame) {
+        if (reply.busyBefore > 0) {
+          drawFlipGlyph(cx, cy, Math.max(1, reply.busyBefore), 0, col(BLUE), (1 - replyFrame.countMix) * alpha);
+        }
+        drawFlipGlyph(cx, cy, Math.max(1, busyCount()), 0, col(BLUE), replyFrame.countMix * alpha);
+        return;
+      }
+      const count = (flight && motion && !motion.returned) ? flight.busyBefore : orbitBusyCount();
+      const countAlpha = (count > 0 ? (motion ? motion.sourceOpacity : 1) : 0) * alpha;
+      if (count > 0) drawFlipGlyph(cx, cy, count, 0, col(BLUE), countAlpha);
+    }
+
+    function clearance(weight, y, present) {
+      if (present) return weight;
+      const neighbours = [];
+      if (busyCount() > 0) neighbours.push(layMiddleY(model.layout));
+      if (completedUnread() > 0) neighbours.push(10 + 28 * model.layout.decision);
+      if (failedRows().length > 0) neighbours.push(layBottomY(model.layout));
+      if (needsAction()) neighbours.push(10);
+      if (neighbours.length === 0) return weight;
+      const distance = Math.min(...neighbours.map(v => Math.abs(v - y)));
+      return separationOpacity(weight, distance);
+    }
+
+    function render() {
+      robot.renders = (robot.renders || 0) + 1;
+      robot.lastRenderAt = +now().toFixed(3);
+      const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+      dpr = window.devicePixelRatio || 1;
+      const bw = Math.max(1, Math.round(cssW * dpr)), bh = Math.max(1, Math.round(cssH * dpr));
+      if (canvas.width !== bw || canvas.height !== bh) {
+        canvas.width = bw;
+        canvas.height = bh;
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (cssW <= 0 || cssH <= 0) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      /* Probe-only: the robot and NOTHING else. The departure hands the robot's
+         own pigment over to the outgoing status colour by design
+         (`RobotDeparture`, and the arrival's blue is the same blue), so a pixel
+         count in the shared column cannot tell "the silhouette shrank" from
+         "the status brush is drawing" — the self-test's shrink assertion parks
+         the status channel and reads the robot alone. Never set outside the
+         probe. */
+      if (model.probeSoloRobot) {
+        drawRobot(cssH / 2);
+        report();
+        return;
+      }
+
+      const frameH = layHeight(model.layout);
+      const oy = (cssH - frameH) / 2;       // 12 pt of black above and below
+      const originY = oy + layMiddleY(model.layout);
+      const topY = oy + 10 + 28 * model.layout.decision;
+      const bottomY = oy + layBottomY(model.layout);
+      const decisionY = oy + 10;
+
+      const busy = busyCount(), unread = completedUnread(), failed = failedRows().length;
+      const flight = model.flight;
+      const angle = reduced() ? 0 : decisionAngle(now());
+      const progress = flight ? clamp01((now() - flight.startedAt) / FLIGHT_DURATION) : 1;
+      const motion = flight ? motionFrame(progress, flight.failed, flight.returnsToRunning, flight.angle) : null;
+      const reply = reduced() ? null : model.reply;
+      const replyProgress = reply ? reply.progress(now()) : 1;
+      const replyFrame = reply ? returnFrame(replyProgress, reply.angle) : null;
+      const localReply = reply ? !reply.travelling : false;
+      const isolated = model.layout.top < 0.0001 && model.layout.bottom < 0.0001;
+      const morphing = localReply || (reply === null && flight === null && isolated
+        && Math.abs(model.layout.middle + model.layout.decision - 1) < 0.001);
+
+      // The brush paints BEHIND every disk (zIndex(-1), :601/:624), so the
+      // solid counters and the black running lamp occlude it.
+      if (reply && replyFrame && reply.travelling) {
+        const ink = mixRGB(BLUE, AMBER, replyFrame.tint);
+        strokeRoute(returnStrokePoints(replyFrame, reply.angle, Math.max(0, layMiddleY(model.layout) - 10)),
+                    15, originY, col(ink), replyFrame.strokeOpacity);
+      }
+      if (flight && motion) {
+        const target = flight.decision ? AMBER : (flight.failed ? RED : GREEN);
+        const gap = flight.decision ? Math.max(0, layMiddleY(model.layout) - 10)
+                                    : 28 * (flight.failed ? model.layout.middle : model.layout.top);
+        let ink = col(mixRGB(BLUE, target, motion.tint));
+        if (motion.returning) {
+          // The visible tail keeps its result colour where it leaves the solid
+          // disk and only blends to blue at the source rim
+          // (STATUS_ MOTION.md:28-29).
+          const direction = flight.failed ? 1 : -1;
+          const gradient = ctx.createLinearGradient(
+            15, (originY - 10) + (0.5 + direction * 28 / 20) * 20,
+            15, (originY - 10) + (0.5 + direction * 9.5 / 20) * 20);
+          gradient.addColorStop(0, col(target));
+          gradient.addColorStop(0.52, col(target));
+          gradient.addColorStop(1, col(BLUE));
+          ink = gradient;
+        }
+        strokeRoute(strokePoints(motion, flight.angle, gap), 15, originY, ink);
+      }
+
+      if (morphing) {
+        const amount = localReply ? 1 - replyProgress : model.layout.decision;
+        const number = Math.max(1, Math.max(busy, model.retainedBusy));
+        drawWorkingDecision(15, decisionY, amount, number, angle,
+                            reply === null && closingDecision());
+      } else {
+        if (model.layout.decision > 0.0001) {
+          // Amber disk with the black exclamation point: DecisionFlipGlyph at
+          // progress 1 (:546-555). Its opacity is the flight's arrival fade times
+          // the reply's fill times the clearance of an empty neighbouring slot.
+          const arrived = (flight && flight.decision && flight.destinationBefore === 0 && motion)
+            ? motion.resultOpacity : 1;
+          const alpha = arrived * (reply && reply.travelling ? replyFrame.fill
+                                                             : clearance(model.layout.decision, 10, needsAction()));
+          if (alpha > 0.001) {
+            disk(15, decisionY, LAMP_RADIUS, AMBER, alpha);
+            drawInk('!', 15, decisionY, col([0, 0, 0]), alpha);
+          }
+        }
+        if (model.layout.top > 0.0001) {
+          const count = (flight && flight.outcome === 'success' && motion && !motion.arrived)
+            ? flight.destinationBefore : Math.max(unread, model.retainedSuccess);
+          const own = (flight && flight.outcome === 'success' && flight.destinationBefore === 0 && motion)
+            ? motion.resultOpacity : 1;
+          drawStatusDisk(15, topY, count, GREEN, [0, 0, 0],
+                         (count > 0 ? own : 0) * clearance(model.layout.top, 10 + 28 * model.layout.decision, unread > 0));
+        }
+        drawRunningDisk(15, originY, angle, flight, motion, reply, replyFrame);
+        if (model.layout.bottom > 0.0001) {
+          const count = (flight && flight.failed && motion && !motion.arrived)
+            ? flight.destinationBefore : Math.max(failed, model.retainedFailure);
+          const own = (flight && flight.failed && flight.destinationBefore === 0 && motion)
+            ? motion.resultOpacity : 1;
+          drawStatusDisk(15, bottomY, count, RED, [1, 1, 1],
+                         (count > 0 ? own : 0) * clearance(model.layout.bottom, layBottomY(model.layout), failed > 0));
+        }
+      }
+
+      /* PHASE 5: with no status at all upstream shows the idle robot
+         (RootView.swift:692-709) and the orbit paints nothing — the two are one
+         clock apart, never side by side: the robot's tiny point BECOMES the
+         blue pen (docs/motion-continuity.md:59). The robot's artwork is the
+         live OpenBotMotion SVG rasterised into this canvas, so the probe can
+         still read what was really painted.
+
+         Its anchor is the CANVAS centre, not the lamp stack's centre: the canvas
+         fills the collapsed capsule (30 x the reported height), while `frameH`
+         is the orbit layout's height inside it. IdleRobotCanvas sits in a
+         maxWidth/maxHeight-centred frame (IdleRobot.swift:402-403), so `cssH/2`
+         is the same point upstream uses. Using `oy + frameH/2` here put the robot
+         at y≈332 on a 44 px canvas — a black pill with the robot painted outside
+         the window's region. */
+      drawRobot(cssH / 2);
+
+      report();
+    }
+
+    /* The robot occupies the same 30 pt column as the lamps and is centred in
+       the pill (`IdleStatusSlot`, IdleRobot.swift:390-414). `robotVisual` has
+       already resolved the departure's scale/opacity/ink. */
+    let lastRobotPaint = null;
+
+    function drawRobot(cy) {
+      const visual = robotVisual(now());
+      if (!visual || !visual.pose) return;
+      if (visual.alpha <= 0.004) return;
+      const pose = visual.pose;
+      let body = pose.body;
+      if (visual.color !== null) {
+        /* The colour handoff happens at the tiny point, between 68% and 74% of
+           the robot's own 0.9 s: the body ink travels from the outgoing status
+           colour to the robot's own pigment (IdleRobot.swift:257-262). */
+        const rgb = hexRGB(body, [0.898, 0.898, 0.906]);
+        const from = robot.lastStatus;
+        body = col(mixRGB(from, rgb, visual.color));
+      }
+      ctx.save();
+      ctx.globalAlpha = visual.alpha;
+      if (visual.scale !== 1) {
+        ctx.translate(15, cy);
+        ctx.scale(visual.scale, visual.scale);
+        ctx.translate(-15, -cy);
+      }
+      const ok = RobotPose.draw(ctx, canvas.clientWidth, canvas.clientHeight, 15, cy, 30, {
+        d: pose.d, body: body, eyes: pose.eyes, dots: pose.dots,
+      });
+      ctx.restore();
+      /* Remember what was actually painted, not what the probe assumes: the
+         robot's pigment changes with the dance clip and with the departure's
+         colour handoff, and an assertion that only knows `#e5e5e7` would
+         silently measure zero. */
+      lastRobotPaint = { body: body, alpha: +visual.alpha.toFixed(3), scale: +visual.scale.toFixed(3),
+                         colorMix: visual.color === null ? null : +visual.color.toFixed(3),
+                         cy: +cy.toFixed(2), canvas: canvas.clientWidth + 'x' + canvas.clientHeight, ok: ok,
+                         at: +now().toFixed(3), departAt: +robot.departAt.toFixed(3),
+                         departProgress: robot.depart
+                           ? +clamp01((now() - robot.departAt) / DEPARTURE_DURATION).toFixed(3) : null,
+                         n: (lastRobotPaint ? lastRobotPaint.n : 0) + 1 };
+      if (!ok) robot.reason = 'draw-failed';
+    }
+
+
+    // ---- the pill's height, reported to the host ---------------------
+    /* The window is sized from OrbitLayout, not from a lamp tally: upstream's
+       restCapsuleHeight is `orbitLayout.height + 24` (RootView.swift:557-560),
+       which is why the shell and the disks cannot disagree while a brush flies
+       (docs/motion-continuity.md:15). Points, like everything else here; the
+       host scales them. */
+    let reportedOrbit = -1, reportedAnim = null, reportedIdle = null;
+    function report() {
+      const height = layHeight(model.layout);
+      /* What the host is told is what the probe reports: the rounded value is
+         the one that was actually sent, and the one the window is sized from. */
+      const rounded = Math.round(height * 100) / 100;
+      const anim = animating();
+      const idle = showsRobot();
+      if (Math.abs(rounded - reportedOrbit) < 0.02 && anim === reportedAnim && idle === reportedIdle) return;
+      reportedOrbit = rounded;
+      reportedAnim = anim;
+      reportedIdle = idle;
+      send({ type: 'rest', orbit: rounded, anim, idle });
+    }
+
+    // ---- self-test / capture hooks -----------------------------------
+    /* `state()` and `ink()` report what was really painted: the canvas is read
+       back, so an assertion is about pixels, not about a class name or a flag.
+       `pin`/`frameAt`/`advance` make a frame reproducible (upstream's renderDate,
+       StatusOrbit.swift:499), and `hold` stops the completion clock so the phase
+       under test cannot be overtaken by a real timer. */
+    const probe = {
+      state() {
+        return {
+          layout: Object.assign({}, model.layout),
+          target: Object.assign({}, model.target),
+          height: layHeight(model.layout),
+          reported: reportedOrbit,
+          animating: animating(),
+          reduced: reduced(),
+          spinActive: spinActive(),
+          morphing: false,
+          flight: model.flight ? {
+            outcome: model.flight.outcome, failed: model.flight.failed,
+            decision: model.flight.decision, busyBefore: model.flight.busyBefore,
+            destinationBefore: model.flight.destinationBefore,
+            returnsToRunning: model.flight.returnsToRunning,
+            elapsed: now() - model.flight.startedAt,
+          } : null,
+          reply: model.reply ? {
+            busyBefore: model.reply.busyBefore, travelling: model.reply.travelling,
+            duration: model.reply.duration, elapsed: now() - model.reply.startedAt,
+          } : null,
+          queued: model.pendingFlights.length,
+          pendingReply: model.pendingReply,
+          /* The live motion/reply frames, so a captured still or a failing
+             assertion can be read as numbers instead of guessed at. */
+          progress: model.flight
+            ? +clamp01((now() - model.flight.startedAt) / FLIGHT_DURATION).toFixed(3) : null,
+          motion: model.flight ? (() => {
+            const m = motionFrame(clamp01((now() - model.flight.startedAt) / FLIGHT_DURATION),
+                                  model.flight.failed, model.flight.returnsToRunning, model.flight.angle);
+            return { distance: +m.distance.toFixed(2), tail: +m.tailLength.toFixed(2),
+                     tint: +m.tint.toFixed(3), resultOpacity: +m.resultOpacity.toFixed(3),
+                     arrived: m.arrived, returning: m.returning, returned: m.returned };
+          })() : null,
+          replyFrame: model.reply ? (() => {
+            const f = returnFrame(model.reply.progress(now()), model.reply.angle);
+            return { progress: +model.reply.progress(now()).toFixed(3), distance: +f.distance.toFixed(2),
+                     fill: +f.fill.toFixed(3), countMix: +f.countMix.toFixed(3), collapse: +f.collapse.toFixed(3) };
+          })() : null,
+          counts: { busy: busyCount(), completed: completedUnread(), failed: failedRows().length,
+                    decision: needsAction() ? 1 : 0 },
+          retained: { busy: model.retainedBusy, success: model.retainedSuccess,
+                      failure: model.retainedFailure },
+          dpr,
+          pinned: pinned,
+          /* The page's own clock, so a test that wants "0.25 s after NOW" can
+             pin to an absolute instant instead of guessing the epoch. */
+          now: +now().toFixed(3),
+          flightStart: model.flight ? +model.flight.startedAt.toFixed(3) : null,
+          flightElapsed: model.flight ? +(now() - model.flight.startedAt).toFixed(3) : null,
+          canvas: { w: canvas.clientWidth, h: canvas.clientHeight },
+          robot: {
+            shows: showsRobot(),
+            visibility: +robot.visibility.toFixed(4),
+            depart: robot.depart,
+            live: robot.live,
+            action: director.action,
+            display: !!robot.display,
+            ready: RobotPose.ready,
+            error: RobotPose.error,
+            reason: robot.reason,
+          },
+        };
+      },
+
+      /* The slot list, in the macOS order, as the old DOM probe reported it. */
+      lampList() {
+        const out = [];
+        if (needsAction()) out.push('decision:!');
+        if (completedUnread() > 0) out.push('completed:' + completedUnread());
+        if (busyCount() > 0) out.push('running:' + busyCount());
+        if (failedRows().length > 0) out.push('failed:' + failedRows().length);
+        return out;
+      },
+
+      /* Read the painted canvas back and classify its pixels against the four
+         tokens. `bbox` is in CSS px with the origin at the canvas' top-left. */
+      ink() {
+        const w = canvas.width, h = canvas.height;
+        if (!w || !h || !canvas.clientWidth) return { error: 'no-bitmap' };
+        const data = ctx.getImageData(0, 0, w, h).data;
+        const refs = { green: GREEN, red: RED, amber: AMBER, blue: BLUE, black: [0, 0, 0], white: [1, 1, 1] };
+        const out = {};
+        for (const key of Object.keys(refs)) {
+          out[key] = { n: 0, minX: 1e9, maxX: -1e9, minY: 1e9, maxY: -1e9, sumX: 0, sumY: 0 };
+        }
+        const scale = 1 / dpr;
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const i = (y * w + x) * 4;
+            const a = data[i + 3] / 255;
+            if (a < 0.25) continue;
+            const r = data[i] / 255, g = data[i + 1] / 255, b = data[i + 2] / 255;
+            let best = null, bestD = 1e9;
+            for (const key of Object.keys(refs)) {
+              const c = refs[key];
+              const d = (r - c[0]) * (r - c[0]) + (g - c[1]) * (g - c[1]) + (b - c[2]) * (b - c[2]);
+              if (d < bestD) { bestD = d; best = key; }
+            }
+            if (bestD > 0.12) continue;
+            const o = out[best];
+            o.n++;
+            const cx = x * scale, cy = y * scale;
+            if (cx < o.minX) o.minX = cx;
+            if (cx > o.maxX) o.maxX = cx;
+            if (cy < o.minY) o.minY = cy;
+            if (cy > o.maxY) o.maxY = cy;
+            o.sumX += cx;
+            o.sumY += cy;
+          }
+        }
+        const result = { dpr, w: canvas.clientWidth, h: canvas.clientHeight };
+        for (const key of Object.keys(out)) {
+          const o = out[key];
+          result[key] = o.n === 0
+            ? { n: 0 }
+            : { n: o.n, cx: +(o.sumX / o.n).toFixed(2), cy: +(o.sumY / o.n).toFixed(2),
+                minX: +o.minX.toFixed(2), maxX: +o.maxX.toFixed(2),
+                minY: +o.minY.toFixed(2), maxY: +o.maxY.toFixed(2) };
+        }
+        return result;
+      },
+
+      /* How much non-black ink is inside a horizontal band of the canvas (CSS px).
+         This is how "the brush was really in transit between the slots" is
+         asserted: a band that lies between the two slots is crossed mid-flight
+         and empty once the stroke has arrived. */
+      inkBand(y0, y1) {
+        const w = canvas.width, h = canvas.height;
+        if (!w || !h || !canvas.clientWidth) return 0;
+        const data = ctx.getImageData(0, 0, w, h).data;
+        const from = Math.max(0, Math.round(y0 * dpr));
+        const to = Math.min(h, Math.round(y1 * dpr));
+        let n = 0;
+        for (let y = from; y < to; y++) {
+          for (let x = 0; x < w; x++) {
+            const i = (y * w + x) * 4;
+            if (data[i + 3] < 64) continue;
+            if (data[i] < 24 && data[i + 1] < 24 && data[i + 2] < 24) continue;  // black shell / disk
+            n++;
+          }
+        }
+        return n;
+      },
+
+      /* How much OPAQUE DARK ink is inside a box of the canvas (CSS px). A disk's
+         glyph is drawn in black on top of it, so this is how "the lamp really
+         carries its numeral/exclamation" is asserted: the box sits inside the
+         disk, where the only dark pixels can be the glyph. */
+      darkIn(x0, y0, x1, y1) {
+        const w = canvas.width, h = canvas.height;
+        if (!w || !h || !canvas.clientWidth) return 0;
+        const data = ctx.getImageData(0, 0, w, h).data;
+        const ix0 = Math.max(0, Math.round(x0 * dpr)), ix1 = Math.min(w, Math.round(x1 * dpr));
+        const iy0 = Math.max(0, Math.round(y0 * dpr)), iy1 = Math.min(h, Math.round(y1 * dpr));
+        let n = 0;
+        for (let y = iy0; y < iy1; y++) {
+          for (let x = ix0; x < ix1; x++) {
+            const i = (y * w + x) * 4;
+            if (data[i + 3] < 200) continue;
+            // 90, not 0: the glyph's core is black but its antialiased edge is
+            // not, and a thin stroke is mostly edge.
+            if (data[i] < 90 && data[i + 1] < 90 && data[i + 2] < 90) n++;
+          }
+        }
+        return n;
+      },
+
+      /* The pinned clock now runs the WHOLE presentation step, robot included:
+         a robot assertion has to survive the same `pin`/`advance` discipline as
+         a stroke assertion, or a real timer would overtake the frame under test. */
+      pin(at) { pinned = at; robotStep(at); return true; },
+      advance(dt) {
+        pinned = (pinned === null ? now() : pinned) + dt;
+        robotStep(pinned);
+        return true;
+      },
+      hold(on) {
+        held = !!on;
+        if (held) { clearTimeout(finishTimer); finishTimer = 0; }
+        return held;
+      },
+      frameAt(dt) {
+        if (!model.flight) return false;
+        pinned = model.flight.startedAt + dt;
+        robotStep(pinned);
+        return true;
+      },
+      replyAt(dt) {
+        if (!model.reply) return false;
+        pinned = model.reply.startedAt + dt;
+        robotStep(pinned);
+        return true;
+      },
+      /* Land the current flight/reply exactly, then run the next one. */
+      settle() {
+        if (model.flight) {
+          pinned = model.flight.startedAt + FLIGHT_DURATION;
+          finishFlight(model.flight);
+        } else if (model.reply) {
+          pinned = model.reply.startedAt + model.reply.duration;
+          finishReply(model.reply);
+        }
+        robotStep(now());
+        return true;
+      },
+      /* Drive the queue to its end at a pinned clock, so a terminal state can be
+         asserted without waiting for real timers (which `hold` suppresses). */
+      land() {
+        held = true;
+        clearTimeout(finishTimer);
+        finishTimer = 0;
+        for (let i = 0; i < 12; i++) {
+          if (model.flight) {
+            pinned = model.flight.startedAt + FLIGHT_DURATION;
+            finishFlight(model.flight);
+          } else if (model.reply) {
+            pinned = model.reply.startedAt + model.reply.duration;
+            finishReply(model.reply);
+          } else if (model.pendingFlights.length > 0) {
+            startNextFlight();
+          } else {
+            pinned = (pinned === null ? realNow() : pinned) + 2;
+            robotStep(pinned);
+            if (!model.layoutActive) break;
+          }
+        }
+        model.layoutActive = false;
+        robotStep(now());
+        return true;
+      },
+      /* Back to an empty model, so each scenario starts from the same place
+         instead of inheriting the previous fixture's running set. */
+      reset() {
+        model.rows = [];
+        model.previousBusyIds = new Set();
+        model.initialized = false;
+        model.layout = layout(0, 0, 0, 0);
+        model.from = layout(0, 0, 0, 0);
+        model.target = layout(0, 0, 0, 0);
+        model.flight = null;
+        model.reply = null;
+        model.pendingFlights = [];
+        model.pendingReply = null;
+        model.spin = null;
+        model.layoutActive = false;
+        model.retainedBusy = 0;
+        model.retainedSuccess = 0;
+        model.retainedFailure = 0;
+        /* The robot has its own state machine beside the lamps', and a scenario
+           that inherited the previous one's presence would be unreadable, so
+           `reset` clears it too — including the director's clip clock. Visibility
+           goes to 0 (not 1): the next frame decides whether the robot is on
+           screen, and starting from "hidden, undecided" is the only value that
+           makes both edges of the transition observable. */
+        robot.idle = null;
+        robot.display = null;
+        robot.previous = null;
+        robot.depart = false;
+        robot.departFrom = null;
+        robot.entryFrom = null;
+        robot.entryAt = 0;
+        robot.since = 0;
+        robot.entryVisibility = 0;
+        robot.visibility = 0;
+        robot.live = false;
+        robot.reason = 'reset';
+        director.stop();
+        /* A scenario starts from a running scheduler, or the robot would be a
+           frozen silhouette until something else happened to start it. */
+        if (!reduced()) director.start(true);
+        clearTimeout(finishTimer);
+        finishTimer = 0;
+        pinned = null;
+        render();
+        return true;
+      },
+      /* The OS setting, forced from the page so the self-test is deterministic
+         on a machine whose animations are switched off. */
+      reduce(on) {
+        model.probeReduce = !!on;
+        /* Reduce Motion reaches the robot's scheduler directly — the same
+           contract the host's `SPI_GETCLIENTAREAANIMATION` flag has. */
+        director.setReduce(!!on);
+        if (on) {
+          model.flight = null;
+          model.reply = null;
+          model.pendingFlights = [];
+          model.pendingReply = null;
+          model.layoutActive = false;
+          clearTimeout(finishTimer);
+          finishTimer = 0;
+          model.layout = model.target;
+        }
+        render();
+        return model.probeReduce;
+      },
+      live() {
+        pinned = null;
+        tickLayout();
+        render();
+        wake();
+        return true;
+      },
+      /* Park the whole status channel so the canvas holds the robot alone (see
+         `render`). The self-test's departure check needs it: both inks are the
+         same colour at the handover. */
+      soloRobot(on) {
+        model.probeSoloRobot = !!on;
+        render();
+        return model.probeSoloRobot;
+      },
+      /* Where the running pen is, as numbers: `RobotDeparture` parks it for the
+         robot's full 1.22 s (`DecisionSpin.delay`), and "parked" is a claim about
+         this position, not about a flag. */
+      pen() {
+        if (!model.spin) return { spin: false, parked: false, travelled: 0 };
+        const at = now();
+        const travelled = spinPosition(model.spin, at) - model.spin.angle;
+        return {
+          spin: true,
+          delay: +model.spin.delay.toFixed(3),
+          elapsed: +(at - model.spin.began).toFixed(3),
+          travelled: +travelled.toFixed(4),
+          parked: Math.abs(travelled) < 1e-6,
+        };
+      },
+
+      /* What the CURRENT canvas holds, with the clock that painted it and what
+         the robot's own state machine thinks it is: the only way to tell "this
+         frame is wrong" apart from "the clock moved between the pin and the
+         read". Written for the failure-flight and robot checks, which measure
+         frames at a pinned phase. */
+      snapshotOf() {
+        const ink = this.ink();
+        const la = model.layout;
+        const w = (l) => `${l.top.toFixed(2)}/${l.middle.toFixed(2)}/${l.bottom.toFixed(2)}/${l.decision.toFixed(2)}`;
+        const parts = [];
+        for (const key of ['amber', 'green', 'red', 'blue', 'black', 'white']) {
+          const c = ink[key];
+          parts.push(key + '=' + (c && c.n ? c.n : 0));
+        }
+        return `canvas=${ink.w}x${ink.h} dpr=${ink.dpr} pinned=${pinned === null ? 'live' : pinned.toFixed(3)} `
+          + `layout=${w(la)} target=${w(model.target)} `
+          + `flight=${model.flight ? model.flight.outcome : '-'} `
+          + `elapsed=${model.flight ? (now() - model.flight.startedAt).toFixed(3) : '-'} `
+          + `ink[${parts.join(' ')}] `
+          + `robot[ready=${RobotPose.ready} err=${RobotPose.error} running=${director.running} `
+          + `action=${director.action} dLen=${robot.display && robot.display.d ? robot.display.d.length : 0} `
+          + `live=${robot.live} vis=${robot.visibility.toFixed(3)} depart=${robot.depart} `
+          + `departAt=${robot.departAt.toFixed(3)} entryAt=${robot.entryAt.toFixed(3)} since=${robot.since.toFixed(3)} `
+          + `paint=${lastRobotPaint ? JSON.stringify(lastRobotPaint) : '-'} `
+          + `reason=${robot.reason} shows=${showsRobot()} idle=${robot.idle}]`;
+      },
+
+      /* ---- Phase 5: the idle robot -------------------------------- */
+      /* Everything the presence machine and the scheduler are doing, as numbers,
+         so a failing assertion can be read instead of guessed at. */
+      robot() {
+        return {
+          ready: RobotPose.ready,
+          error: RobotPose.error,
+          idle: robot.idle,
+          shows: showsRobot(),
+          visibility: +robot.visibility.toFixed(4),
+          depart: robot.depart,
+          departProgress: robot.depart
+            ? +clamp01((now() - robot.departAt) / DEPARTURE_DURATION).toFixed(4) : null,
+          entryProgress: robot.depart ? null
+            : +clamp01((now() - (robot.entryAt - robot.since)) / 1.05).toFixed(4),
+          entryFrom: !!robot.entryFrom,
+          entryAt: +robot.entryAt.toFixed(3),
+          entryVisibility: +robot.entryVisibility.toFixed(4),
+          departAt: +robot.departAt.toFixed(3),
+          live: robot.live,
+          reason: robot.reason,
+          display: !!robot.display,
+          lastStatus: robot.lastStatus,
+          action: director.action,
+          actionElapsed: +(director.action ? now() - director.began : 0).toFixed(3),
+          duration: director.duration,
+          blend: !!director.blend,
+          sleeping: director.asleep,
+          reduceMotion: director.reduceMotion,
+          lastStatusColor: robot.lastStatus,
+          bbox: RobotPose.bbox(robot.display),
+          birth: (() => {
+            if (!model.flight && layTotal(model.layout) >= 0.0001) return null;
+            const gate = 1 - clamp01((now() - robot.departAt) / DEPARTURE_DURATION);
+            return statusBirth(gate);
+          })(),
+        };
+      },
+
+      /* Pixels of the robot's own palette inside the pill, with their bounding
+         box. The EYES are a fixed ink, but the BODY is not: the dance clip cycles
+         the pigment and the departure blends it towards the outgoing status
+         colour, so `body` is matched against whatever the last frame actually
+         painted (`lastRobotPaint.body`) — measured, not assumed. The eye
+         reference is deliberately near-black, so a pixel has to be very close to
+         it to count: the pure-black pill is excluded. */
+      robotInk() {
+        const w = canvas.width, h = canvas.height;
+        if (!w || !h || !canvas.clientWidth) return { error: 'no-bitmap' };
+        const refs = { body: hexRGB(lastRobotPaint && lastRobotPaint.body, [0.898, 0.898, 0.906]),
+                       eye: [0.090, 0.090, 0.098] };
+        const data = ctx.getImageData(0, 0, w, h).data;
+        const scale = 1 / dpr;
+        const out = { dpr: dpr, w: canvas.clientWidth, h: canvas.clientHeight,
+                      bodyRef: lastRobotPaint ? lastRobotPaint.body : null, paint: lastRobotPaint };
+        for (const key of Object.keys(refs)) {
+          out[key] = { n: 0, minX: 1e9, maxX: -1e9, minY: 1e9, maxY: -1e9, cx: 0, cy: 0 };
+        }
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const i = (y * w + x) * 4;
+            const a = data[i + 3] / 255;
+            if (a < 0.2) continue;
+            const r = data[i] / 255, g = data[i + 1] / 255, b = data[i + 2] / 255;
+            let best = null, bestD = 1e9;
+            for (const key of Object.keys(refs)) {
+              const c = refs[key];
+              const d = (r - c[0]) * (r - c[0]) + (g - c[1]) * (g - c[1]) + (b - c[2]) * (b - c[2]);
+              if (d < bestD) { bestD = d; best = key; }
+            }
+            /* The eye reference is deliberately near-black, so a pixel has to be
+               very close to it to count: the pure-black pill edge is excluded. */
+            const limit = best === 'eye' ? 0.008 : 0.06;
+            if (bestD > limit) continue;
+            const o = out[best];
+            o.n++;
+            const cx = x * scale, cy = y * scale;
+            if (cx < o.minX) o.minX = cx;
+            if (cx > o.maxX) o.maxX = cx;
+            if (cy < o.minY) o.minY = cy;
+            if (cy > o.maxY) o.maxY = cy;
+            o.cx += cx;
+            o.cy += cy;
+          }
+        }
+        for (const key of Object.keys(refs)) {
+          const o = out[key];
+          if (o.n === 0) { out[key] = { n: 0 }; continue; }
+          out[key] = {
+            n: o.n, cx: +(o.cx / o.n).toFixed(2), cy: +(o.cy / o.n).toFixed(2),
+            minX: +o.minX.toFixed(2), maxX: +o.maxX.toFixed(2),
+            minY: +o.minY.toFixed(2), maxY: +o.maxY.toFixed(2),
+          };
+        }
+        out.eyesVisible = out.eye.n > 0;
+        return out;
+      },
+
+      /* What the vendored renderer really wrote into the SVG DOM — the evidence
+         that the engine is alive and that our parsing assumptions hold. */
+      /* The last robot paint as numbers, plus how many frames have painted one —
+         "the robot did not shrink" and "the robot was never asked to draw" need
+         different answers. */
+      paint() {
+        return Object.assign({}, lastRobotPaint || { never: true },
+          { renders: robot.renders || 0, resizes: robot.resizes || 0,
+            lastRenderAt: robot.lastRenderAt, pinned: pinned });
+      },
+
+      robotEngine(clip, t) { return RobotPose.inspect(clip, t); },
+
+      /* Drive the scheduler to an exact clip phase without waiting for a random
+         5-10 s gap: the assertion is about the artwork, not about the dice. */
+      robotAction(action, elapsed) {
+        const clip = action === 'dance' ? 'dance' : action;
+        return director.resume(clip, elapsed === undefined ? 0 : elapsed, null, now());
+      },
+      robotPlay(action) { return director.play(action, now()); },
+      robotTryNext() { director.tryNext(); return director.action; },
+      /* `carry`/`mix` are pure, so they can be asserted without a browser: the
+         numbers behind "an interrupted transition keeps its velocity". */
+      robotCarry(dt) {
+        const t = now();
+        const previous = director.buildPose(t - 1 / 240);
+        const pose = director.buildPose(t);
+        const carried = RobotPose.carry(pose, previous, dt);
+        return {
+          bbox: RobotPose.bbox(pose),
+          carried: RobotPose.bbox(carried),
+          moved: RobotPose.bbox(carried) && RobotPose.bbox(pose)
+            ? +Math.hypot(RobotPose.bbox(carried).minX - RobotPose.bbox(pose).minX,
+                          RobotPose.bbox(carried).minY - RobotPose.bbox(pose).minY).toFixed(3)
+            : null,
+        };
+      },
+    };
+
+    /* The idle robot's renderer (OpenBotMotion, vendored byte-identical) is
+       initialised up front but stays idle until no lamp is left. A failure here
+       is not fatal: the page then simply paints the status lamps only. */
+    if (!RobotPose.init({ clip: 'blink' })) robot.reason = 'no-renderer:' + RobotPose.error;
+
+    render();
+
+    return {
+      snapshot,
+      setMotion(on) {
+        if (model.motion === on) return;
+        model.motion = on;
+        /* Reduce Motion holds the robot's scheduler too: no gestures, no blink,
+           just the neutral pose (`IdleDirector.tick`, IdleRobot.swift:167). */
+        director.setReduce(!on || model.probeReduce);
+        if (reduced()) probe.reduce(true);
+        else director.start(true);
+        render();
+        wake();
+      },
+      probe,
+      get height() { return layHeight(model.layout); },
+    };
+  })();
+
+  /* The probe surface the host's self-test and the --shot captures drive. It
+     reports what was painted (canvas pixels) and lets a frame be pinned to an
+     exact instant, which is what makes a motion assertion reproducible. */
+  window.__notchOrbit = orbit;
+
+  // ------------------------------------------------------------------
+  // expanded: the session list
+  // ------------------------------------------------------------------
+
+  /* Row state precedence is the macOS if/else-if order verbatim
+     (RootView.swift:1000-1019): busy → failed → needsAction → unread → idle.
+     The pip colour and the trailing label both follow from it. */
+  function rowState(row) {
+    if (row.busy) return 'busy';
+    if (row.failed) return 'failed';
+    if (row.needsAction) return 'decision';
+    if (row.completed) return 'completed';
+    return 'idle';
+  }
+
+  /* A finished, not-yet-dismissed successful turn.
+     `unread` is the ONLY source of truth here. An earlier version also accepted
+     "the last turn succeeded and the row is idle", to paper over the Host's
+     one-frame busy→idle lag (board.ts:111-113 refreshes its running set at the
+     END of a snapshot, so a completion can arrive one frame late). That made every
+     green lamp PERMANENT: after 「全部已读」 the Host correctly returns
+     unread:false, but the turn still exists and is still successful, so the lamp
+     came straight back and the button looked broken. Upstream's predicate is
+     unread-first for the same reason (RootView.swift:150-152). */
+  function isCompleted(row) {
+    return !row.busy && !row.failed && !row.needsAction && row.unread === true;
+  }
+
+  function renderList(rows) {
+    const key = JSON.stringify(rows.map(r => [
+      r.id, r.title, r.busy, r.failed, r.needsAction, r.unread,
+      r.lastTurn ? r.lastTurn.at : 0, r.approval ? r.approval.id : '',
+      r.ask ? r.ask.id : '',
+    ]));
+    if (listEl.dataset.key === key) return;
+    listEl.dataset.key = key;
+
+    emptyEl.hidden = rows.length > 0;
+    listEl.replaceChildren(...rows.map(row => {
+      const state = rowState(row);
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'row ' + state;
+      el.dataset.id = row.id;
+      el.dataset.noDrag = '';           // clicking a row must not start a drag
+
+      const pip = document.createElement('i');
+      pip.className = 'pip';
+
+      const title = document.createElement('span');
+      title.className = 'title';
+      title.textContent = row.title || row.id;
+
+      el.append(pip, title);
+
+      // Trailing label: busy rows say so, freshly completed rows say "完成"
+      // (RootView.swift:1029-1037). Nothing else gets a label.
+      if (state === 'busy') {
+        const s = document.createElement('span');
+        s.className = 'state busy';
+        s.textContent = '运行中';
+        el.append(s);
+      } else if (state === 'completed' && row.unread) {
+        const s = document.createElement('span');
+        s.className = 'state completed';
+        s.textContent = '完成';
+        el.append(s);
+      } else if (state === 'decision') {
+        const s = document.createElement('span');
+        s.className = 'state busy';
+        s.textContent = '待回复';
+        el.append(s);
+      }
+
+      return el;
+    }));
+  }
+
+  function renderSnapshot(msg) {
+    lastSnapshotAt = Date.now();
+    offlineEl.hidden = true;
+
+    const counts = msg.counts || {};
+
+    // The compact pill has something to look at: upstream only scales the pill
+    // content on hover when a status is on screen (RootView.swift:697).
+    document.body.classList.toggle('hasstatus',
+      ((counts.busy || 0) + (counts.completed || 0) + (counts.failed || 0) + (counts.decision || 0)) > 0);
+
+    const rows = (msg.rows || []).map(row => Object.assign({}, row, {
+      completed: isCompleted(row),
+    }));
+    lastRows = rows;
+    // The status pill runs its own model: which running session finished, which
+    // outcome flies where, and when a reply returns a task to the blue lamp
+    // (RootView.swift:86-347). It is fed complete snapshots, like the Swift one.
+    orbit.snapshot(rows);
+    renderList(rows);
+    renderWizard();
+
+    badgeBusy.hidden = !(counts.busy > 0);
+    badgeBusyN.textContent = (counts.busy || 0) + ' 进行中';
+    badgeCompleted.hidden = !(counts.completed > 0);
+    badgeCompletedN.textContent = (counts.completed || 0) + ' 完成';
+
+    scheduleMeasure();
+  }
+
+  // ------------------------------------------------------------------
+  // AskUserQuestion wizard (Phase 3)
+  // ------------------------------------------------------------------
+
+  /* The wizard is a straight port of the macOS AskWizard model
+     (RootView.swift:43-525): per-question drafts, the first question that is not
+     answered yet drives the index, a single-select chip answers AND advances, a
+     multi-select chip accumulates, 完成 appears only where upstream shows it.
+
+     Two deliberate departures, both because the platform differs:
+       * the answer field asks the HOST for the keyboard (message "input"), since
+         keystrokes follow the foreground window and this window is deliberately
+         non-activating;
+       * `showCustomField` is never toggled on: upstream's only toggle
+         (toggleCustomField) is unreachable dead code — no view calls it — so a
+         custom field appears exactly where upstream's does, namely on a question
+         that has no options at all. */
+
+  let wizard = null;      // { askId, sessionId, index, drafts: { qid: {...} } }
+  let activeAsk = null;   // the ask currently on screen
+  let customInput = null; // the answer field of the current step, if any
+  let submitting = false;
+  let answerFailed = false;
+
+  const draftOf = (qid) => {
+    let draft = wizard.drafts[qid];
+    if (!draft) {
+      draft = { selected: [], custom: '', skipped: false };
+      wizard.drafts[qid] = draft;
+    }
+    return draft;
+  };
+
+  const isDone = (qid) => {
+    const draft = draftOf(qid);
+    return draft.skipped || draft.selected.length > 0 || draft.custom.trim() !== '';
+  };
+
+  const allDone = () => !!activeAsk && activeAsk.questions.every(q => isDone(q.id));
+
+  /* The host makes the same decision (NotchWindow.LongDetailThreshold) and caps
+     the window at the screen height when it is true. */
+  const LONG_DETAIL = 240;
+  const hasLongDetail = (ask) => ask.questions.some(q => (q.detail || '').length > LONG_DETAIL);
+
+  function openWizard(row) {
+    if (wizard && wizard.askId === row.ask.id) return;
+    const drafts = {};
+    row.ask.questions.forEach(q => { drafts[q.id] = { selected: [], custom: '', skipped: false }; });
+    wizard = { askId: row.ask.id, sessionId: row.id, index: 0, drafts };
+    submitting = false;
+    answerFailed = false;
+    errorEl.hidden = true;
+  }
+
+  function renderWizard() {
+    const row = lastRows.find(r => r.ask && r.ask.questions && r.ask.questions.length > 0);
+    if (!row) {
+      // The question is gone: the Host folds the capsule by itself. The wizard
+      // must not stay on screen with a stale question.
+      activeAsk = null;
+      wizard = null;
+      customInput = null;
+      document.body.classList.remove('wizard', 'long-detail');
+      wizardEl.dataset.key = '';
+      return;
+    }
+
+    openWizard(row);
+    activeAsk = row.ask;
+    document.body.classList.add('wizard');
+    document.body.classList.toggle('long-detail', hasLongDetail(activeAsk));
+
+    const count = activeAsk.questions.length;
+    const index = Math.min(wizard.index, count - 1);
+    wizard.index = index;
+    const question = activeAsk.questions[index];
+    const draft = draftOf(question.id);
+    const options = question.options || [];
+    const showInput = options.length === 0 || wizard.showCustom === true;
+    const last = index === count - 1;
+    const completeMode = last && (question.multiSelect === true || options.length === 0
+      || draft.custom.trim() !== '');
+    const navMode = completeMode ? 'complete' : (last || count === 1 ? 'none' : 'next');
+
+    const key = [wizard.askId, index, showInput ? 1 : 0, navMode,
+      options.map(o => o.label).join('\u0001')].join('|');
+    if (wizardEl.dataset.key !== key) {
+      wizardEl.dataset.key = key;
+      buildWizardDom(question, options, showInput, index, count, navMode);
+    }
+
+    syncWizardState();
+  }
+
+  function buildWizardDom(question, options, showInput, index, count, navMode) {
+    titleEl.textContent = question.question;
+    counterEl.textContent = count > 1 ? (index + 1) + '/' + count : '';
+    counterEl.hidden = count <= 1;
+
+    detailEl.replaceChildren();
+    if (question.detail) renderMarkdown(detailEl, question.detail);
+
+    chipsEl.replaceChildren();
+    options.forEach(option => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.dataset.noDrag = '';
+      chip.dataset.label = option.label;
+
+      const label = document.createElement('span');
+      label.className = 'chip-label';
+      label.textContent = option.label;
+      chip.append(label);
+
+      if (option.description) {
+        const desc = document.createElement('span');
+        desc.className = 'chip-desc';
+        desc.textContent = option.description;
+        chip.append(desc);
+      }
+
+      chipsEl.append(chip);
+    });
+
+    customInput = null;
+    if (showInput) {
+      customInput = document.createElement('input');
+      customInput.className = 'w-input';
+      customInput.type = 'text';
+      customInput.placeholder = '输入你的答案';
+      customInput.dataset.noDrag = '';
+      customInput.maxLength = 4000;
+      customInput.addEventListener('input', onCustomInput);
+      customInput.addEventListener('keydown', onCustomKey);
+      customInput.addEventListener('focusin', () => send({ type: 'input', focused: true }));
+      customInput.addEventListener('focusout', () => send({ type: 'input', focused: false }));
+      chipsEl.append(customInput);
+    }
+
+    prevBtn.hidden = count <= 1;
+    prevBtn.disabled = index === 0;
+    nextBtn.hidden = navMode === 'none';
+    nextBtn.textContent = navMode === 'complete' ? '完成' : '下一题';
+  }
+
+  /* Brings the DOM in line with the drafts WITHOUT rebuilding it. This is what
+     keeps the caret in the answer field while the user types, and what updates
+     the chip highlight after a multi-select tap. */
+  function syncWizardState() {
+    if (!activeAsk || !wizard) return;
+
+    const question = activeAsk.questions[wizard.index];
+    const draft = draftOf(question.id);
+
+    for (const chip of chipsEl.querySelectorAll('.chip')) {
+      chip.classList.toggle('on', draft.selected.indexOf(chip.dataset.label) >= 0);
+    }
+
+    if (customInput && document.activeElement !== customInput && customInput.value !== draft.custom) {
+      customInput.value = draft.custom;
+    }
+
+    // 完成 (and only 完成) is gated on every question being answered
+    // (RootView.swift:927-931).
+    if (nextBtn.textContent === '完成') nextBtn.disabled = !allDone();
+    prevBtn.disabled = wizard.index === 0;
+
+    errorEl.hidden = !answerFailed;
+    if (answerFailed) errorEl.textContent = '提交失败，请重试；也可以在 DSH 中回答。';
+  }
+
+  function tapOption(label) {
+    if (!activeAsk || !wizard) return;
+
+    const count = activeAsk.questions.length;
+    const question = activeAsk.questions[wizard.index];
+    const draft = draftOf(question.id);
+
+    if (question.multiSelect === true) {
+      const at = draft.selected.indexOf(label);
+      if (at >= 0) draft.selected.splice(at, 1);
+      else draft.selected.push(label);
+      draft.skipped = false;
+    } else {
+      // Picking an option replaces a typed answer (RootView.swift:431-434).
+      draft.selected = [label];
+      draft.custom = '';
+      draft.skipped = false;
+    }
+
+    wizard.showCustom = false;
+    if (question.multiSelect !== true && wizard.index < count - 1) wizard.index++;
+
+    renderWizard();
+
+    // A single-select tap answers the question, so the moment the LAST one is
+    // answered the whole ask is submitted without another click
+    // (RootView.swift:442-444).
+    if (question.multiSelect !== true && allDone()) submitWizard();
+  }
+
+  function onCustomInput(event) {
+    if (!activeAsk || !wizard) return;
+    const question = activeAsk.questions[wizard.index];
+    const draft = draftOf(question.id);
+    draft.custom = event.target.value;
+    draft.skipped = false;
+    if (question.multiSelect !== true) draft.selected = [];
+    syncWizardState();
+  }
+
+  function onCustomKey(event) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    if (allDone()) submitWizard();
+  }
+
+  /* Builds the answer body (src/types.ts:56-60) exactly as upstream does
+     (RootView.swift:505-515) and hands it to the host, which owns the token. */
+  function submitWizard() {
+    if (!activeAsk || !wizard || submitting || !allDone()) return;
+
+    submitting = true;
+    answerFailed = false;
+    errorEl.hidden = true;
+
+    const answers = activeAsk.questions.map(question => {
+      const draft = draftOf(question.id);
+      if (draft.skipped) return { id: question.id, selected: [] };
+      const custom = draft.custom.trim();
+      const item = {
+        id: question.id,
+        // A typed answer replaces the options for a single-select question, and
+        // accompanies them for a multi-select one.
+        selected: custom === '' || question.multiSelect === true ? draft.selected.slice() : [],
+      };
+      if (custom !== '') item.custom = custom;
+      return item;
+    });
+
+    send({ type: 'answer', id: wizard.askId, answers });
+  }
+
+  titleEl.addEventListener('click', () => {
+    // Same gesture as clicking a row: mark seen and ask DSH to show the session.
+    if (wizard) send({ type: 'open', id: wizard.sessionId });
+  });
+
+  chipsEl.addEventListener('click', (event) => {
+    const chip = event.target.closest ? event.target.closest('.chip') : null;
+    if (chip) tapOption(chip.dataset.label);
+  });
+
+  prevBtn.addEventListener('click', () => {
+    if (!wizard || wizard.index <= 0) return;
+    wizard.index--;
+    renderWizard();
+  });
+
+  nextBtn.addEventListener('click', () => {
+    if (!wizard || !activeAsk) return;
+    if (nextBtn.textContent === '完成') {
+      submitWizard();
+      return;
+    }
+    if (wizard.index < activeAsk.questions.length - 1) {
+      wizard.index++;
+      renderWizard();
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // markdown — a port of macos/Sources/NotchMarkdown.swift
+  // ------------------------------------------------------------------
+
+  /* Ported rather than pulled in as a library: the capsule is offline (no CDN,
+     no bundler) and upstream's renderer is the reference the macOS build is
+     judged against. Every node is built with textContent — never innerHTML —
+     because a question detail is untrusted text and must not be able to inject
+     markup into the capsule. */
+
+  const MD_INLINE = /(`[^`]+`)|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*]+\*)|(_[^_]+_)|(\[[^\]]+\]\([^)\s]+\))/g;
+
+  function mdInline(text) {
+    const fragment = document.createDocumentFragment();
+    let last = 0;
+    let match;
+    MD_INLINE.lastIndex = 0;
+    while ((match = MD_INLINE.exec(text)) !== null) {
+      if (match.index > last) fragment.append(text.slice(last, match.index));
+      const token = match[0];
+
+      if (token.charAt(0) === '`') {
+        const code = document.createElement('code');
+        code.textContent = token.slice(1, -1);
+        fragment.append(code);
+      } else if (token.startsWith('**') || token.startsWith('__')) {
+        const strong = document.createElement('strong');
+        strong.textContent = token.slice(2, -2);
+        fragment.append(strong);
+      } else if (token.charAt(0) === '[') {
+        // Rendered as a label, not a link: the host cancels any navigation away
+        // from the capsule, so an <a href> here could only ever do nothing.
+        const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(token);
+        const span = document.createElement('span');
+        span.className = 'md-a';
+        span.textContent = link ? link[1] : token;
+        span.title = link ? link[2] : '';
+        fragment.append(span);
+      } else {
+        const em = document.createElement('em');
+        em.textContent = token.slice(1, -1);
+        fragment.append(em);
+      }
+
+      last = match.index + token.length;
+    }
+
+    if (last < text.length) fragment.append(text.slice(last));
+    return fragment;
+  }
+
+  function mdHeading(line) {
+    if (line.charAt(0) !== '#') return null;
+    let level = 0;
+    while (level < line.length && line.charAt(level) === '#') level++;
+    if (level === 0 || level > 6 || line.length <= level || line.charAt(level) !== ' ') return null;
+    return { type: 'heading', level, text: line.slice(level + 1) };
+  }
+
+  const mdTrim = (line) => line.trim();
+
+  function mdIsDivider(line) {
+    const text = mdTrim(line);
+    if (text.charAt(0) !== '|') return false;
+    return text.replace(/\|/g, '').replace(/:/g, '').replace(/-/g, '').replace(/\s/g, '') === '';
+  }
+
+  function mdCells(line) {
+    const parts = line.split('|').map(part => part.trim());
+    if (parts.length && parts[0] === '') parts.shift();
+    if (parts.length && parts[parts.length - 1] === '') parts.pop();
+    return parts;
+  }
+
+  const mdIsBullet = (line) => line.startsWith('- ') || line.startsWith('* ');
+
+  function mdOrderedItem(line) {
+    const dot = line.indexOf('.');
+    if (dot <= 0) return null;
+    const number = line.slice(0, dot);
+    if (!/^\d+$/.test(number)) return null;
+    const rest = line.slice(dot + 1);
+    return rest.charAt(0) === ' ' ? rest.slice(1) : null;
+  }
+
+  const mdIsOrdered = (line) => mdOrderedItem(line) !== null;
+
+  function mdBlocks(source) {
+    const lines = String(source).replace(/\r\n/g, '\n').split('\n');
+    const blocks = [];
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = mdTrim(lines[i]);
+      if (line === '') { i++; continue; }
+
+      if (line.startsWith('```')) {
+        i++;
+        const body = [];
+        while (i < lines.length && !mdTrim(lines[i]).startsWith('```')) { body.push(lines[i]); i++; }
+        if (i < lines.length) i++;
+        blocks.push({ type: 'code', text: body.join('\n') });
+        continue;
+      }
+
+      if (line === '---' || line === '***' || line === '___') {
+        blocks.push({ type: 'rule' });
+        i++;
+        continue;
+      }
+
+      const heading = mdHeading(line);
+      if (heading) { blocks.push(heading); i++; continue; }
+
+      if (line.charAt(0) === '|' && i + 1 < lines.length && mdIsDivider(lines[i + 1])) {
+        const headers = mdCells(line);
+        i += 2;
+        const rows = [];
+        while (i < lines.length && mdTrim(lines[i]).charAt(0) === '|') { rows.push(mdCells(lines[i])); i++; }
+        blocks.push({ type: 'table', headers, rows });
+        continue;
+      }
+
+      if (line.startsWith('> ') || line === '>') {
+        const quoted = [];
+        while (i < lines.length) {
+          const text = mdTrim(lines[i]);
+          if (text.startsWith('> ')) quoted.push(text.slice(2));
+          else if (text === '>') quoted.push('');
+          else break;
+          i++;
+        }
+        blocks.push({ type: 'quote', text: quoted.join('\n') });
+        continue;
+      }
+
+      if (mdIsBullet(line) || mdIsOrdered(line)) {
+        const ordered = mdIsOrdered(line);
+        const items = [];
+        while (i < lines.length) {
+          const text = mdTrim(lines[i]);
+          const item = ordered ? mdOrderedItem(text) : (mdIsBullet(text) ? text.slice(2) : null);
+          if (item === null) break;
+          items.push(item);
+          i++;
+        }
+        blocks.push({ type: 'list', items, ordered });
+        continue;
+      }
+
+      const paragraph = [line];
+      i++;
+      while (i < lines.length) {
+        const text = mdTrim(lines[i]);
+        if (text === '' || text.charAt(0) === '#' || text.charAt(0) === '|' || text.startsWith('```')
+          || text.startsWith('> ') || mdIsBullet(text) || mdIsOrdered(text) || text === '---') break;
+        paragraph.push(text);
+        i++;
+      }
+      blocks.push({ type: 'paragraph', text: paragraph.join(' ') });
+    }
+
+    return blocks;
+  }
+
+  function renderMarkdown(container, source) {
+    for (const block of mdBlocks(source)) {
+      if (block.type === 'heading') {
+        const level = Math.min(block.level, 3);
+        const heading = document.createElement('h' + level);
+        heading.append(mdInline(block.text));
+        container.append(heading);
+        continue;
+      }
+
+      if (block.type === 'paragraph') {
+        const paragraph = document.createElement('p');
+        paragraph.append(mdInline(block.text));
+        container.append(paragraph);
+        continue;
+      }
+
+      if (block.type === 'list') {
+        const list = document.createElement(block.ordered ? 'ol' : 'ul');
+        block.items.forEach((item, index) => {
+          const li = document.createElement('li');
+          const marker = document.createElement('span');
+          marker.className = 'md-marker';
+          marker.textContent = block.ordered ? (index + 1) + '.' : '•';
+          const body = document.createElement('span');
+          body.append(mdInline(item));
+          li.append(marker, body);
+          list.append(li);
+        });
+        container.append(list);
+        continue;
+      }
+
+      if (block.type === 'table') {
+        const table = document.createElement('table');
+        const head = document.createElement('thead');
+        const headRow = document.createElement('tr');
+        block.headers.forEach(cell => {
+          const th = document.createElement('th');
+          th.append(mdInline(cell));
+          headRow.append(th);
+        });
+        head.append(headRow);
+        table.append(head);
+
+        const body = document.createElement('tbody');
+        block.rows.forEach(cells => {
+          const row = document.createElement('tr');
+          cells.forEach(cell => {
+            const td = document.createElement('td');
+            td.append(mdInline(cell));
+            row.append(td);
+          });
+          body.append(row);
+        });
+        table.append(body);
+        container.append(table);
+        continue;
+      }
+
+      if (block.type === 'code') {
+        const pre = document.createElement('pre');
+        pre.textContent = block.text;
+        container.append(pre);
+        continue;
+      }
+
+      if (block.type === 'quote') {
+        const quote = document.createElement('blockquote');
+        quote.append(mdInline(block.text));
+        container.append(quote);
+        continue;
+      }
+
+      if (block.type === 'rule') container.append(document.createElement('hr'));
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // content height reporting
+  // ------------------------------------------------------------------
+
+  /* The panel hugs its content (RootView.swift:576-583), and the page is the
+     only side that knows how the rows actually wrapped. The reported value is
+     the intrinsic height of the list's contents, which does NOT depend on the
+     viewport — so the window resizing cannot feed back into the measurement and
+     start an oscillation. */
+  /* The intrinsic height of a column of blocks: the sum of the children plus the
+     gaps between them.
+     Reading `scrollHeight` instead would be wrong for anything with a flexible
+     child: scrollHeight is never smaller than the element's own client height, so
+     a `flex:1` list reports the CURRENT panel height back to the host — the panel
+     would then never shrink to its content and would keep whatever height it had
+     (visible as a black band under the last row). Summing the boxes has no such
+     self-reference. */
+  function contentHeight(el, gap) {
+    const kids = [...el.children];
+    if (kids.length === 0) return 0;
+    let total = 0;
+    for (const kid of kids) total += kid.getBoundingClientRect().height;
+    return Math.ceil(total + gap * (kids.length - 1));
+  }
+
+  function measure() {
+    if (!expanded) return;
+
+    const chrome = 28;                 // #panel padding, top+bottom
+    const gap = 12;                    // #panel gap between its blocks
+    const blocks = [];
+
+    if (activeAsk) {
+      // A long detail is not measured at all: the host caps the window at the
+      // screen height and the detail scrolls inside it, so measuring here would
+      // only fight that decision.
+      if (hasLongDetail(activeAsk)) return;
+      blocks.push(contentHeight(wizardEl, 10));
+      if (!errorEl.hidden) blocks.push(errorEl.offsetHeight);
+    } else {
+      // The badge ROW, not one badge inside it: the row is what the panel lays
+      // out, and it is as tall as its tallest child (the clear button). Measuring
+      // a single badge left the panel 8 px short of its own content — enough for
+      // the list to overflow and paint a scrollbar thumb beside one row of text.
+      if (!badgesEl.hidden) blocks.push(badgesEl.getBoundingClientRect().height);
+      blocks.push(listEl.children.length === 0 ? emptyEl.offsetHeight : contentHeight(listEl, 4));
+    }
+
+    const content = blocks.reduce((sum, height) => sum + height, 0)
+      + gap * Math.max(0, blocks.length - 1);
+    const rounded = Math.round(chrome + content);
+
+    // Re-measuring mid-bloom would fight the host's animation; the one value the
+    // host's settle handler reads is the final one.
+    if (!settled) return;
+
+    // A 1 px difference is not worth a 400 ms animation. 4 px is above font
+    // metric noise and below anything visible.
+    if (Math.abs(rounded - reportedHeight) < 4) return;
+    reportedHeight = rounded;
+
+    // `rounded` is CSS pixels (that is what the DOM reports); the host sizes the
+    // window in physical pixels. See panelScale.
+    send({ type: 'height', value: Math.round(rounded * panelScale) });
+  }
+
+  /* Measures now, and again shortly after.
+     The first frame after a snapshot can be measured before every box has
+     reached its final height — a row that grows once its label is laid out, a
+     scrollbar appearing, a table sizing itself. The 4 px gate below then keeps
+     that early value on screen, which showed up as a list box a few pixels
+     shorter than its only row (and therefore a scrollbar thumb next to a single
+     line of text). The second pass is unconditional; the host ignores a height it
+     already has, so a stable layout costs one no-op message. */
+  let measureTimer = 0;
+
+  function scheduleMeasure() {
+    requestAnimationFrame(measure);
+    clearTimeout(measureTimer);
+    measureTimer = setTimeout(() => { reportedHeight = 0; measure(); }, 160);
+  }
+
+  // ------------------------------------------------------------------
+  // interactions
+  // ------------------------------------------------------------------
+
+  // A press on interactive chrome (rows, buttons — anything marked data-no-drag)
+  // must not start a window drag.
+  const isInteractive = (el) => !!(el && el.closest && el.closest('[data-no-drag]'));
+
+  shell.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || isInteractive(e.target)) return;
+    send({ type: 'press' });
+  });
+
+  // The edge-switch gesture (double-click) is detected by the host from click
+  // timestamps, not here: the first click of a pair resizes the window, so the
+  // second one hits a different node and dblclick would never fire while the
+  // capsule is collapsed.
+  shell.addEventListener('contextmenu', (e) => {
+    if (isInteractive(e.target)) return;
+    e.preventDefault();
+    send({ type: 'reset' });
+  });
+
+  shell.addEventListener('dragstart', (e) => e.preventDefault());
+
+  listEl.addEventListener('click', (e) => {
+    const row = e.target.closest ? e.target.closest('.row') : null;
+    if (!row) return;
+    // Row click = dismiss this session's unread lamp and ask DSH to show it
+    // (upstream model.pick, RootView.swift:349-374). The host performs both
+    // requests: the page never holds the token.
+    send({ type: 'open', id: row.dataset.id });
+  });
+
+  document.getElementById('clear').addEventListener('click', () => {
+    send({ type: 'seen' });            // POST /seen {all:true}
+  });
+
+  if (host) {
+    host.addEventListener('message', (event) => {
+      const msg = event.data;
+      if (!msg) return;
+
+      if (msg.type === 'geometry') {
+        const wasExpanded = expanded;
+        expanded = !!msg.expanded;
+        const wasSettled = settled;
+        settled = msg.settled !== false;
+
+        document.body.classList.toggle('expanded', expanded);
+        // Mirror the rounded corners to whichever edge is attached, and match
+        // the host's clip radius so the page's antialiasing lines up with it.
+        if (msg.edge) document.body.classList.toggle('edge-left', msg.edge === 'left');
+        if (msg.radius) document.documentElement.style.setProperty('--radius', msg.radius + 'px');
+
+        // The shell is laid out at its full CSS size and CLIPPED by the window, so
+        // this is the panel width (480 pt) — a constant, converted from the
+        // physical pixels the host reports. If it tracked the animated window
+        // width instead, the text would re-wrap every frame, and since the panel's
+        // height is measured from that text, the page's own measurement would
+        // drive the window in a loop.
+        if (msg.width) {
+          document.documentElement.style.setProperty('--panel-w', toCssPx(msg.width, msg.scale) + 'px');
+        }
+        if (msg.scale > 0) panelScale = msg.scale;
+        if (msg.hovered !== undefined) document.body.classList.toggle('hovered', !!msg.hovered);
+        // Reduce Motion is a host setting (SPI_GETCLIENTAREAANIMATION), so the
+        // page follows it instead of guessing: no flight, no spin, terminal state
+        // straight away (STATUS-MOTION.md:5).
+        if (msg.motion !== undefined) orbit.setMotion(!!msg.motion);
+
+        if (!wasExpanded && expanded) {
+          reportedHeight = 0;
+          scheduleMeasure();
+        } else if (expanded && (!wasSettled && settled)) {
+          // The bloom has landed: now the measurement is worth taking.
+          scheduleMeasure();
+        }
+      }
+
+      if (msg.type === 'hover') document.body.classList.toggle('hovered', !!msg.hovered);
+
+      // The host can see state changes the page cannot (automation expanded the
+      // capsule from the outside), so it asks for a fresh measurement.
+      if (msg.type === 'measure') {
+        reportedHeight = 0;
+        scheduleMeasure();
+      }
+
+      if (msg.type === 'snapshot') renderSnapshot(msg);
+
+      // The host is the only side that knows whether POST /answer was accepted.
+      // Without these two the wizard would either lock up after one submission or
+      // silently look unanswered (upstream sets actionError for the same reason,
+      // RootView.swift:519-523).
+      if (msg.type === 'answer-ok') {
+        submitting = false;
+      }
+
+      if (msg.type === 'answer-failed') {
+        submitting = false;
+        answerFailed = true;
+        syncWizardState();
+        scheduleMeasure();
+      }
+    });
+  }
+
+  // Lets the host confirm the page is alive and the bridge works, instead of
+  // guessing from the outside; the host answers with the current geometry, the
+  // hover state and the newest snapshot.
+  send({ type: 'ready' });
+
+  // The status line turns honest when the data stops: the macOS build shows the
+  // same kind of "等待 Host…" state (RootView.swift:177-180).
+  setInterval(() => {
+    if (!lastSnapshotAt) return;
+    const stale = Date.now() - lastSnapshotAt > 8000;
+    offlineEl.hidden = !stale;
+  }, 2000);
+
+  // Fallback so the shape is never wrong if a state message is missed during
+  // startup. The host resends geometry on "ready", so this only covers a host
+  // that died before answering.
+  const sync = () => {
+    if (document.documentElement.dataset.gotGeometry) return;
+    document.body.classList.toggle('expanded', window.innerWidth > 120);
+  };
+  new ResizeObserver(sync).observe(document.documentElement);
+  sync();
+</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RootNamespace>DshNotchWin</RootNamespace>
+    <AssemblyName>dsh-notch-win</AssemblyName>
+    <AssemblyTitle>dsh-notch-win</AssemblyTitle>
+    <Product>dsh-notch-win</Product>
+    <Version>0.1.0</Version>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- The WebView2 package ships a WPF assembly that drags in a second
+         WindowsBase; the conflict is inert for this WinForms host. -->
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
+    <!-- WFAC010 wants DPI awareness configured via ApplicationHighDpiMode
+         instead of the manifest. The manifest is deliberate: it is applied by
+         the OS before managed code runs, whereas the API path depends on call
+         ordering and silently no-ops otherwise. See app.manifest. -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Chromium-based renderer host. The runtime is already present on
+         Windows 11 (WebView2 Runtime 152.x on the target machine). -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>
