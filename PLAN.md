@@ -2,7 +2,7 @@
 
 > 把 macOS 专属的 [dsh-notch](https://github.com/aa2246740/dsh-notch)（DSH 原生任务胶囊）移植为 Windows 11 版本。
 >
-> 状态：**Phase 0/1/2/3 已完成 ✅**，Phase 4（StatusOrbit 四态笔画）未开始；详见 §15 执行记录
+> 状态：**Phase 0~7 已完成 ✅**（含托盘退出通道、上游 PR #2）；**Phase 8：取消开机自启、改为随 DSH 启动 ✅**；详见 §15 执行记录
 > 日期：2026-09-14
 > 上游版本：dsh-notch 0.3.0（MIT）
 
@@ -252,7 +252,7 @@ D:\DSH\dsh-notch-win\              ← 上游 fork
 胶囊是覆盖层：`WS_EX_TOOLWINDOW` + `ShowInTaskbar=false` + 无标题栏，所以
 
 - 任务栏上没有按钮，Alt-Tab 里没有它，窗口上没有任何可右键的边框；
-- 装入 HKCU 自启后它会随会话一直存在；
+- 每次 DSH 启动都会把它拉起来（Phase 8 起，替代原先的开机自启），而它自己没有任何可关闭的地方；
 
 **没有这个图标时，用户唯一的退出方式是任务管理器**（Phase 6 结束时就是这个状态）。上游 macOS 也没有"可关闭的窗口"，通知区域是 Windows 侧的对应物。
 
@@ -947,22 +947,24 @@ SetWindowPos(SWP_NOACTIVATE|NOZORDER) + SetWindowRgn
 
 ---
 
-### Phase 6 — 安装 / 自启 / 卸载 / 回滚 + 全量验收（2026-09-14，**已完成 ✅（自启待用户确认）**）
+### Phase 6 — 安装 / 卸载 / 回滚 + 全量验收（2026-09-14，**已完成 ✅**；其中"开机自启"已于 Phase 8 删除）
 
 **范围**（PLAN §9 第 6 步）：把"能跑"变成"装得上、退得掉" —— 一条安装命令、一条卸载命令、每一步都可回滚，并按 §11 清单做一次全量验收。
-**不做**：自动更新、托盘图标、多用户机器级安装（本机是单用户、无 UAC 的场景，全部走 HKCU + 用户目录）。
+**不做**：自动更新、托盘图标（Phase 7 补上）、多用户机器级安装（本机是单用户、无 UAC 的场景，全部走用户目录）。
 
-#### 6.1 装的是什么（三条边，全部可逆）
+#### 6.1 装的是什么（三条边，全部可逆；**没有注册表**）
 
 | 边 | 位置 | 由谁写 | 回滚 |
 |---|---|---|---|
 | Host 插件 | `%USERPROFILE%\.dsh\profiles\web\dsh-notch` → `D:\DSH\dsh-notch-win`（junction） | `install.ps1`（已存在则跳过，指向别处则拒绝） | `uninstall.ps1` 删链接（**不碰仓库本体**） |
 | 加载项 | 同目录 `cordis.patch.yml` 的 `- insert: id: dsh-notch` | `install.ps1` 追加（先备份 `.bak-<时间戳>`；已存在则跳过） | 逐行摘除该 insert 及其紧邻的注释块，并断言文件里再无 `id: dsh-notch` |
-| 自启 | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\DshNotchWin` | `install.ps1 -NoAutostart` 可跳过 | 删除该项；装之前若有旧值则**还原旧值**（记录在 `.installed.json`） |
+| 启动项 | 同目录 `cordis.patch.yml` 的 `- insert: id: dsh-notch-win-launcher`（`windows/launcher/notch-launcher.ts`） | `install.ps1` 追加（同上） | 同上一行（卸载后 DSH 不再拉起胶囊） |
+
+> **Phase 8 变更**：第三条边原来是 `HKCU\...\Run\DshNotchWin`（开机自启）。用户 2026-09-14 要求删掉，改为"**开启 DSH 时自动打开胶囊**"，即现在的 launcher insert —— 安装脚本从此不写任何注册表项。详见 §15 Phase 8。
 
 exe 不复制到别处：**仓库的构建产物就是被安装的二进制**（`windows/DshNotchWin/bin/Release/net8.0-windows/win-x64/dsh-notch-win.exe`）。理由很实际 —— Host 插件本来就是从同一棵树经 junction 加载的，两个副本 = 迟早出现"我到底在跑哪个构建"。
 
-`.installed.json` 记录本次安装动过的每一样东西（含装之前的自启值），卸载据此精确还原；手工换过 `-ProfileRoot`/`-AutostartKey` 也一样（脚本参数可覆盖，这正是沙箱验证用的入口）。
+`.installed.json` 记录本次安装动过的每一样东西（路径、两个 patch 条目、每次改写前的备份），卸载据此精确还原；手工换过 `-ProfileRoot` 也一样（脚本参数可覆盖，这正是沙箱验证用的入口）。
 
 #### 6.2 用法
 
@@ -970,36 +972,37 @@ exe 不复制到别处：**仓库的构建产物就是被安装的二进制**（
 # 安装（默认重新构建；-Start 顺手把胶囊拉起来）
 pwsh -File windows\install\install.ps1 -Start
 
-# 只登记插件、不要开机自启
-pwsh -File windows\install\install.ps1 -NoAutostart
-
 # 不要动正在跑的胶囊（默认只对真实安装动手；沙箱模式自动跳过）
 pwsh -File windows\install\install.ps1 -NoBuild -KeepRunning
 
 # 先看看会改什么（一个字节都不写）
 pwsh -File windows\install\install.ps1 -WhatIf
 
-# 卸载（保留仓库与构建产物；-KeepPatch 只摘自启）
+# 卸载（保留仓库与构建产物；-KeepPatch 只摘 patch 层）
 pwsh -File windows\install\uninstall.ps1
 ```
 
-重启 DSH web 进程才会加载/卸载 Host 插件（插件在启动时装配）。胶囊自己会等 `~/.dsh/dsh-notch/runtime.json`（2 s 一次）——所以**开机自启早于 DSH 是安全的**：DSH 没起来时它就是边缘上一个待机机器人，Host 写好 origin+token 后自动接上。
+重启 DSH web 进程才会加载/卸载 Host 插件与启动项（插件在启动时装配；`patchReload: live` 下改 patch 文件会当场热加载）。胶囊自己会等 `~/.dsh/dsh-notch/runtime.json`（2 s 一次）——所以**启动顺序无所谓**：DSH 还没写好 origin+token 时它就是边缘上一个待机机器人，Host 一落盘就自动接上；反过来 DSH 重启后它也会重读到新端口重连（Phase 2 的 idle 看门狗）。
+
+Phase 8 之后**没有任何开机自启**：只有 DSH 起来时才会拉起胶囊，Windows 登录不再碰它。
 
 #### 6.3 回滚验证（沙箱往返，本机实测）
 
-在临时 profile + 临时注册表键（`HKCU\Software\DshNotchWinSandbox\Run`）上跑完整往返，**不碰真实安装**：
+在临时 profile（`%TEMP%\dsh-notch-sandbox-<时间戳>`）上跑完整往返，**不碰真实 profile、不碰正在跑的胶囊**（Phase 8 起也没有注册表这一项了）：
 
 | 步骤 | 结果 |
 |---|---|
-| `install.ps1 -NoBuild` | 建 junction、追加 insert（带注释块）、写 Run 值、落 `.installed.json` |
-| 再跑一次 `install.ps1` | 三条全部 `[skip]`（幂等），状态文件合并而不是覆盖旧记录 |
-| `uninstall.ps1` | 删 Run 值、摘除 insert（第 9..16 行 = 注释块 + insert）、删 junction（真实安装的状态文件在沙箱模式下不动） |
-| 摘除后的 `cordis.patch.yml` | 与安装前**逐行一致**（8 行，`meow-memory` 与 `some-other-plugin` 两段完好） |
-| 真实 profile 的 `-WhatIf` | 只报一条计划：写自启项（junction 与 insert 已存在 → skip） |
+| A：patch 层里两个条目都没有 | `install.ps1 -NoBuild -ProfileRoot <tmp>` 建 junction、依次追加两个 insert（各带注释块） |
+| 再跑一次 `install.ps1` | 两条 insert 全部 `[skip]`（幂等），第二次一个字节都没写（哈希不变） |
+| `uninstall.ps1` | 依次摘除两个 insert（含各自注释块）、删 junction；摘除后 `cordis.patch.yml` 与安装前**逐字节一致**（SHA-256 相同） |
+| B：拿真实 profile 的 patch 层做同一往返 | 先卸载得到干净基线 → 安装 → 卸载，再次**逐字节回到基线**（覆盖"两个 insert 相邻、注释块归属"这个最容易摘错的行） |
+| 真实 profile 的 `-WhatIf` | 只报一条计划（junction 与两个 insert 已存在 → skip），一个字节都不写 |
 
-沙箱隔离的两条硬规则（试跑时才发现，都是"试跑不该动真东西"）：
-1. **沙箱不碰正在跑的胶囊** —— `-ProfileRoot`/`-AutostartKey` 任一被覆盖即视为沙箱模式，此时既不结束胶囊进程、也不写真实安装的 `.installed.json`（状态文件只属于真实安装，卸载要靠它还原"装之前的自启值"）。第一次试跑忘了这条，把用户正在看的胶囊一起杀了。/ 需要显式保留进程还有 `-KeepRunning`。
+沙箱隔离的两条硬规则（都是"试跑不该动真东西"）：
+1. **沙箱不碰正在跑的胶囊** —— `-ProfileRoot` 不是默认 profile 即视为沙箱模式，此时既不结束胶囊进程、也不写真实安装的 `.installed.json`（状态文件只属于真实安装）。第一次试跑忘了这条，把用户正在看的胶囊一起杀了。需要显式保留进程还有 `-KeepRunning`。
 2. **只删自己指向的 junction** —— 目标不是本仓库时直接 `[fail]` 退出，绝不动别的插件留下的链接。
+
+Phase 8 之后沙箱只需覆盖 `-ProfileRoot`（原来还要覆盖一个临时注册表键，随开机自启一起删掉了）。实测脚本是临时的 `_tmp\notch-sandbox-test.ps1`（不入库），末行输出 `ALL SANDBOX CHECKS PASSED`。
 
 #### 6.4 全量验收（PLAN §11 逐条对账）
 
@@ -1047,21 +1050,11 @@ pwsh -File windows\install\uninstall.ps1
 
 > Phase 7 之后的当前总账见 §15「Phase 7」：`--selftest` **139 项（137 PASS + 2 项已知偶发）**，另有两项像素采样在此机器上不稳定，**基线同样复现**（详见该节「已知遗留」）。
 
-#### 6.5 开机自启：已按用户确认打开 ✅
+#### 6.5 开机自启（历史，**Phase 8 已删除**）
 
-用户 2026-09-14 明确选择"现在就打开"，已执行 `pwsh -File windows\install\install.ps1 -NoBuild -Start`：
+用户 2026-09-14 曾明确选择"现在就打开"，当时执行 `pwsh -File windows\install\install.ps1 -NoBuild -Start`，登记了 `HKCU\...\Run\DshNotchWin = "...\dsh-notch-win.exe"`，状态文件记 `autostartWritten=true, previousAutostart=null`，胶囊重启后 3 秒内 `transport stream connected` + `rest height -> 57x68 orbit=20.57pt`。
 
-```
-  [skip] junction already points at the repo (...)
-  [skip] cordis.patch.yml already inserts dsh-notch
-  [plan] set HKCU:\Software\Microsoft\Windows\CurrentVersion\Run\DshNotchWin = "...\dsh-notch-win.exe"
-  [done] state written to windows\install\.installed.json
-  [done] capsule started
-```
-
-实测结果：`HKCU\...\Run\DshNotchWin = "...\windows\DshNotchWin\bin\Release\net8.0-windows\win-x64\dsh-notch-win.exe"`；状态文件 `autostartWritten=true, previousAutostart=null`（即删掉即可完全复原）；胶囊重启后 3 秒内 `transport stream connected` + `rest height -> 57x68 orbit=20.57pt`，说明它照旧接回了 Host。
-
-回滚路径也用 `-WhatIf` 对真实 profile 预演过，动作恰好是四步：停胶囊 → 删 Run 项 → 摘 insert（真实文件第 35..48 行）→ 删 junction（外加删状态文件）。真要做就是：
+同日晚些时候用户改主意了（原话见 §15 Phase 8）：**删掉开机自启，改成"开启 DSH 时自动打开胶囊"**。该 Run 项已删除，install/uninstall 脚本里的自启分支与 `-NoAutostart`/`-AutostartKey`/`-AutostartName` 参数、以及状态文件里的自启字段一并移除。回滚路径因此变成四步：停胶囊 → 摘两个 insert → 删 junction（外加删状态文件）：
 
 ```powershell
 pwsh -File windows\install\uninstall.ps1
@@ -1169,3 +1162,65 @@ BUILTIN\Administrators
 5. 一份显式 ACL 脚本还会带来新的失败模式：安装/首次运行时的 `icacls` 失败会让整个启动路径失败，而它保护的东西并没有变得更安全。
 
 结论：**接受现状（不加显式 ACL、不改 DPAPI），并在 §12 里把等级从「中」降到「低」**。DPAPI 保护仍然是一个"如果将来要防同用户进程"时的选项，但那时真正的边界不在文件权限上，而在"谁能在本机以本用户身份执行代码"——那已经不是这个插件能回答的问题。
+
+---
+
+### Phase 8 — 取消开机自启，改为随 DSH 启动（2026-09-14，**已完成 ✅**）
+
+**用户要求（原话）**：「将deepseek-notch的开机自启动功能删掉，改为我开启deepseek harness时自动打开deepseek-notch」。
+
+#### 8.1 为什么这是对的（不是把自启换个地方注册）
+
+胶囊是**一个程序的两半**：Host 插件跑在 DSH 进程里，胶囊只是它的界面。开机自启把这两半的寿命解绑了 —— 一登录就起，哪怕一整天不开 DSH；DSH 关掉了它还在。改成"Host 起来时拉起界面"，寿命重新对齐，而且**不再需要注册表**：安装脚本回到纯用户目录（junction + 两条 patch insert）。
+
+DSH 侧只需要一个加载时机。patch 层里本来就有一个 insert（Host 插件），再加一个 insert 就是 Launcher —— 唯一的代价是启动顺序可能颠倒（launcher 可能先于 Host 写好 `runtime.json`），而这一条早就有答案：胶囊自己 2 s 轮询等 `runtime.json`、并会在 DSH 换端口后重读重连（Phase 2/6 的结论）。所以 launcher 的逻辑可以简化成"**查进程 → 分离启动 → 忘记**"，不留任何需要收尾的状态。
+
+#### 8.2 改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `windows/launcher/notch-launcher.ts`（新增） | 独立 DSH 插件：`tasklist` 查进程 → `spawn(..., {detached, stdio:'ignore'}).unref()` → 忘记。`DSH_NOTCH_WIN_EXE` 可换二进制，`DSH_NOTCH_WIN_LAUNCH=0` 可整体关掉 |
+| `windows/install/install.ps1` | 删掉整个 autostart 段与 `-NoAutostart`/`-AutostartKey`/`-AutostartName`；patch insert 泛化成"两条条目的幂等追加"；状态文件改记 `patchEntries`/`patchBackups` |
+| `windows/install/uninstall.ps1` | 删掉整个 autostart 段（含"还原旧值"）；insert 摘除对两个 id 各跑一遍 |
+| `%USERPROFILE%\.dsh\profiles\web\cordis.patch.yml` | 追加 `- insert: id: dsh-notch-win-launcher`（由 install.ps1 写） |
+| `HKCU\...\CurrentVersion\Run\DshNotchWin` | **删除** |
+| `PLAN.md` §6.1/6.2/6.3/6.5、§7.5、§0 状态行 | 按事实改写（§6.5 保留为历史） |
+
+为什么不把这十来行写进 `src/dsh-notch.ts`：`src/` 是上游代码（本移植只保留 board.ts 的 3 处有意差异），`windows/` 才是 Windows 侧。启动行为是 Windows 特有的，就放在 Windows 子项目里 —— 这样上游 PR 里"Host 插件层一行不改"这句话仍然成立。
+
+#### 8.3 实测证据
+
+注册表项已删（其余 8 项完好）：
+
+```
+before: "D:\DSH\dsh-notch-win\...\win-x64\dsh-notch-win.exe"
+after : ''      # GetValueNames() 中已无 DshNotchWin
+```
+
+启动器两条分支（直接 `node` 加载 `.ts`，Node 24 strip-only）：
+
+```
+[dsh-notch-win] capsule started (pid 10696) from ...\dsh-notch-win.exe   # 命令结束后该 pid 仍在 → detached 生效
+[dsh-notch-win] capsule already running (dsh-notch-win.exe)
+[dsh-notch-win] launcher disabled (DSH_NOTCH_WIN_LAUNCH=0)
+```
+
+**真机端到端**（不是只测启动器）：`install.ps1 -NoBuild` 先停掉旧胶囊再追加 insert，`patchReload: live` 让**正在运行的 DSH** 当场加载 launcher —— 新胶囊 pid 7532 的父进程查出来正是 `node.exe ... @deepseek-ai/dsh/lib/bin.js web`，30 ms 内 `transport stream connected` / `tray shown` / `geometry settled 57x66 rate~315 Hz edge=left top=428`。
+
+**冷启动组合校验**（不重启 DSH，只用 `--dump-config` 打出真实装配结果）：
+
+```
+> - id: dsh-notch
+>   name: file:///C:/Users/Administrator/.dsh/profiles/web/dsh-notch/src/dsh-notch.ts
+> - id: dsh-notch-win-launcher
+    name: >-
+      file:///C:/Users/Administrator/.dsh/profiles/web/dsh-notch/windows/launcher/notch-launcher.ts
+```
+
+安装/卸载往返见 §6.3（两个用例，摘除后与基线逐字节一致）。本阶段不碰 C#，`--selftest` 维持 Phase 7 的 139 项基线。
+
+#### 8.4 已知边界（诚实记录）
+
+- **DSH 退出不会关掉胶囊**：用户只要求"启动时打开"。DSH 关了之后胶囊重连不上，停在待机/最后状态，托盘右键仍可退出。若以后要它随 DSH 一起收，加一条 dispose 钩子即可 —— 但那会让 DSH 的每次重启都闪一次界面，所以没有默认打开。
+- **只有加载了 dsh-notch 插件的 profile 会拉起胶囊**（当前就是 `web`）。别的 profile 里没有 Host，也就没有胶囊 —— 与"胶囊只在有 Host 时才有数据"一致。
+- 本次端到端是**热加载**触发的（同一份 patch 组合，`--dump-config` 另外证明了冷启动会解析出同一个 entry）。真正"重启 DSH"这一动作留给用户下次开机/重启时自然验证。
