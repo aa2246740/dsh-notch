@@ -67,6 +67,36 @@ internal static class Program
             robotAt = parsedRobotAt;
         }
 
+        // --icon <path>: write the notification-area glyph out as a PNG (and the
+        // multi-size .ico next to it) and exit. The tray icon is drawn in code
+        // rather than shipped as a binary asset, so this is the only way to look
+        // at it without a notification area in front of you — and it is how the
+        // acceptance screenshot in windows/shots was produced.
+        int iconIndex = Array.FindIndex(
+            args, a => a.Equals("--icon", StringComparison.OrdinalIgnoreCase));
+        string? iconPath = iconIndex >= 0 && iconIndex + 1 < args.Length ? args[iconIndex + 1] : null;
+        if (iconPath is not null)
+        {
+            NativeMethods.AttachConsole(-1);
+
+            string iconPng = Path.ChangeExtension(iconPath, ".png");
+            string iconIco = Path.ChangeExtension(iconPath, ".ico");
+
+            using (Bitmap bitmap = TrayGlyph.Render(48))
+            {
+                bitmap.Save(iconPng, System.Drawing.Imaging.ImageFormat.Png);
+            }
+
+            using (Icon icon = TrayGlyph.CreateIcon(new[] { 16, 24, 32, 48 }))
+            using (FileStream stream = File.Create(iconIco))
+            {
+                icon.Save(stream);
+            }
+
+            Console.WriteLine($"tray icon: {iconPng} + {iconIco} (16/24/32/48)");
+            return 0;
+        }
+
         // Upstream warns against running a second helper while one is already
         // shell-managed; a named mutex enforces it in a single instance. The
         // test modes take their own names so they can run beside the real one.
