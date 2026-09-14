@@ -496,7 +496,7 @@ TypeScript parameter property is not supported in strip-only mode
 | WebView2 初始化 | PASS（runtime 152.0.4191.66） |
 | 覆盖样式在 WebView2 初始化后仍存活 | PASS |
 
-**截图证据**（程序自截，`--shot`，物理像素）：`windows/shots/rest.png`、`windows/shots/expanded.png`
+**截图证据**（程序自截，`--shot`，物理像素）：`windows/shots/p2-rest-right.png`、`windows/shots/p2-expanded-right.png`（Phase 1 spike 时的 `rest.png`/`expanded.png` 后来被 Phase 2 的 `p2-*` 一组取代，旧文件已删）
 
 **实测行为**（物理像素，150% 缩放）：悬停 `48×165 @2512` → `720×390 @1840`，**右边缘恒为 2560**（锚点契约与上游 `Panel.swift` 一致）；移开约 1s 后自动回到 `48×165`。
 
@@ -552,7 +552,7 @@ TypeScript parameter property is not supported in strip-only mode
 
 **新增自检项（共 31 项全 PASS）**：`snaps to right edge`、`snaps to left edge`、`expand grows away from edge`、`expand keeps outer edge`、`region follows the edge`、`clamps bottom/top inside work area`、`placement round-trips`、`placement resolves`、`legacy placement migrates`。
 
-**截图证据**：`windows/shots/right-rest.png`、`left-rest.png`、`left-expanded.png`（左侧镜像圆角已确认）。`--shot` 新增 `--edge left` 开关，且自动化路径**不写**用户的位置文件。
+**截图证据**：`windows/shots/p2-rest-right.png`、`windows/shots/p2-rest-left.png`、`windows/shots/p2-expanded-left.png`（左侧镜像圆角已确认；spike 时的 `right-rest.png`/`left-rest.png`/`left-expanded.png` 已被 Phase 2 的 `p2-*` 取代）。`--shot` 新增 `--edge left` 开关，且自动化路径**不写**用户的位置文件。
 
 ### Phase 1 追加三 — 阴影闪回与拖动流畅度（2026-09-14）
 
@@ -1037,3 +1037,18 @@ pwsh -File windows\install\uninstall.ps1
 ```powershell
 pwsh -File windows\install\uninstall.ps1
 ```
+
+
+#### 6.6 入库的验收截图与复现命令
+
+仓库只收 **5 张代表性截图**（合计约 208 KB，其中 `p3-ask-long.png` 一张就占 168 KB），其余留在工作区：截图由 `--shot` 完全可再生产，而二进制进 git 历史是删不掉的（upstream 的 `.gitignore` 本身就有一条 `*.png`，所以这几张是 `git add -f` 收进来的）。
+
+| 图 | 说明 | 复现命令（工作目录 = 仓库根） |
+|---|---|---|
+| `windows/shots/p2-rest-right.png` | 收起态（空载、贴右边缘） | `dsh-notch-win.exe --shot windows\shots\p2-rest-right.png` |
+| `windows/shots/p3-ask-long.png` | 长 markdown 详情的向导 | `... --shot windows\shots\p3-ask-long.png --ask-long` |
+| `windows/shots/p4-live.png` | **真实数据**下的四态笔画（绿 1 + 蓝 1） | 有真实任务在跑时 `... --shot windows\shots\p4-live.png` |
+| `windows/shots/p5-idle.png` | 待机机器人（白） | `... --shot windows\shots\p5-idle.png --robot idle` |
+| `windows/shots/p5-flight.png` | 离场中段（半收缩 + 蓝环） | `... --shot windows\shots\p5-flight.png --robot flight` |
+
+`exe` = `windows\DshNotchWin\bin\Release\net8.0-windows\win-x64\dsh-notch-win.exe`。`--shot` 是自动化路径：**不写**用户的位置文件，合成状态的那几条还会先 Dispose 掉真实 transport，防止真实快照在曝光中途覆盖画面。
