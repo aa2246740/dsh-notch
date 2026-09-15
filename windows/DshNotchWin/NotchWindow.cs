@@ -46,6 +46,11 @@ internal sealed class NotchWindow : Form
     private readonly System.Windows.Forms.Timer _poll = new();
     private readonly System.Windows.Forms.Timer _fold = new();
 
+    /// <summary>The capsule's antialiased free edge. A window region can only cut
+    /// whole pixels, so the pixels that straddle the rounded corners are painted by
+    /// this click-through layered band instead — see NotchEdgeLayer.</summary>
+    private NotchEdgeLayer? _edgeLayer;
+
     private bool _expanded;
     private bool _enteredIsland;
     private bool _hovered;
@@ -265,6 +270,13 @@ internal sealed class NotchWindow : Form
         if (_scale <= 0f) _scale = 1f;
 
         ApplyOverlayStyles();
+
+        // Before the first sizing, so the very first frame already carries its
+        // antialiased free edge. Not in the constructor: the band is a second
+        // top-level window and has to be ordered against a real capsule handle.
+        _edgeLayer = new NotchEdgeLayer(BackColor);
+        _edgeLayer.SyncOrder(Handle);
+
         RestoreOrAnchorPlacement();
         _startingUp = true;
         ApplySize();
@@ -343,6 +355,11 @@ internal sealed class NotchWindow : Form
         // left to process teardown.
         _tray?.Dispose();
         _tray = null;
+
+        // The band is a second top-level window with its own DC and DIB; the
+        // capsule's handle is already destroyed by now, so nothing can race it.
+        _edgeLayer?.Dispose();
+        _edgeLayer = null;
 
         base.OnFormClosed(e);
     }
@@ -500,6 +517,11 @@ internal sealed class NotchWindow : Form
             Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE
             | NativeMethods.SWP_FRAMECHANGED);
+
+        // Raising the capsule to the head of the topmost band can leave the
+        // antialiasing band below some other topmost window; put it back directly
+        // under the capsule, where the compositor expects to find it.
+        _edgeLayer?.SyncOrder(Handle);
     }
 
     // ------------------------------------------------------------------
@@ -645,10 +667,7 @@ internal sealed class NotchWindow : Form
         // geometry change (the page reporting its measured height, for instance)
         // settled on the wrong height and stayed there.
         (int fx, int fy, int fw, int fh) = _animation.Frame(startedAt);
-        NativeMethods.SetWindowPos(
-            Handle, IntPtr.Zero, fx, fy, fw, fh,
-            NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
-        ApplyRegion(fw, fh);
+        MoveCapsuleFrame(fx, fy, fw, fh);
         _liveWidth = fw;
         _liveHeight = fh;
 
@@ -668,10 +687,7 @@ internal sealed class NotchWindow : Form
 
         if (moveWindow)
         {
-            NativeMethods.SetWindowPos(
-                Handle, IntPtr.Zero, x, y, width, height,
-                NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
-            ApplyRegion(width, height);
+            MoveCapsuleFrame(x, y, width, height);
         }
     }
 
@@ -776,6 +792,26 @@ internal sealed class NotchWindow : Form
         }
     }
 
+    /// <summary>
+    /// Moves AND shapes the capsule — the one place a frame of it is applied.
+    ///
+    /// The capsule's frame is no longer a single window: the antialiasing band has
+    /// to be placed against the same geometry, or the free edge would be drawn from
+    /// two different frames (a dark sliver of the band left at the old corner, a
+    /// hard step exposed at the new one). Both windows keep their z-order
+    /// (SWP_NOZORDER): the band was ordered under the capsule once, when the
+    /// capsule's styles were applied, and a per-frame re-stack would make the
+    /// overlay climb above whatever topmost window the user has in front of it.
+    /// </summary>
+    private void MoveCapsuleFrame(int x, int y, int width, int height)
+    {
+        NativeMethods.SetWindowPos(
+            Handle, IntPtr.Zero, x, y, width, height,
+            NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
+        ApplyRegion(width, height);
+        _edgeLayer?.Place(new Rectangle(x, y, width, height), Scale(CornerRadius), AttachedRight);
+    }
+
     // ------------------------------------------------------------------
     // animation: a dedicated thread, because WM_TIMER is capped at 64 Hz
     // ------------------------------------------------------------------
@@ -857,10 +893,7 @@ internal sealed class NotchWindow : Form
 
             try
             {
-                NativeMethods.SetWindowPos(
-                    Handle, IntPtr.Zero, x, y, width, height,
-                    NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
-                ApplyRegion(width, height, Scale(CornerRadius));
+                MoveCapsuleFrame(x, y, width, height);
             }
             catch (ObjectDisposedException)
             {
@@ -891,6 +924,91 @@ internal sealed class NotchWindow : Form
 
             Thread.Sleep(1);
         }
+    }
+
+    /// <summary>Perceived brightness, for the edge-blend measurement only.</summary>
+    private static int Luma(Color colour) => (colour.R * 30 + colour.G * 59 + colour.B * 11) / 100;
+
+    /// <summary>
+    /// Screen-level evidence that the free edge is antialiased: on every row of
+    /// both corner arcs, the pixel that straddles the IDEAL edge has to be a blend
+    /// of the capsule's fill and the desktop — neither of them. A binary region
+    /// cannot produce such a pixel; its corner steps from one to the other in whole
+    /// pixels, which is the stair-stepping this band exists to remove. Comparing
+    /// each row against the desktop measured in that same row means an arbitrary
+    /// wallpaper cannot fake the result, and rows whose desktop happens to match
+    /// the capsule's own fill are reported as unmeasurable instead of counted.
+    /// </summary>
+    private (int Rows, int Blended, int Skipped) MeasureFreeEdgeBlend()
+    {
+        const int Pad = 6;
+        Rectangle live = LiveBounds;
+        if (live.Width < 8 || live.Height < 8) return (0, 0, 0);
+
+        // The free side is the one the capsule is NOT attached to.
+        bool freeRight = _edge != ScreenEdge.Right;
+        int radius = Math.Clamp(
+            Scale(NotchGeometry.CornerRadius), 0, Math.Min(live.Width / 2, live.Height / 2));
+        if (radius <= 1) return (0, 0, 0);
+
+        using var bitmap = new Bitmap(live.Width + Pad, live.Height);
+        using (Graphics graphics = Graphics.FromImage(bitmap))
+        {
+            // The capsule's own rectangle plus a few columns of desktop beside the
+            // free edge: exactly what the compositor put on screen, band included.
+            graphics.CopyFromScreen(live.Left, live.Top, 0, 0, bitmap.Size);
+        }
+
+        int rows = 0;
+        int blended = 0;
+        int skipped = 0;
+        for (int corner = 0; corner < 2; corner++)
+        {
+            int first = corner == 0 ? 0 : live.Height - radius;
+            for (int y = first; y < first + radius; y++)
+            {
+                rows++;
+
+                int boundary = (int)Math.Floor(
+                    NotchGeometry.CapsuleFreeEdge(y, live.Width, live.Height, radius));
+
+                // Outside the shape and well inside it, in capsule coordinates;
+                // mirrored for a right-attached capsule, whose free side is left.
+                int outerX = freeRight ? boundary + 3 : live.Width - 1 - (boundary + 3);
+                int innerX = freeRight ? boundary - 3 : live.Width - 1 - (boundary - 3);
+                if (outerX < 0 || outerX >= live.Width || innerX < 0 || innerX >= live.Width)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                int outside = Luma(bitmap.GetPixel(outerX, y));
+                int inside = Luma(bitmap.GetPixel(innerX, y));
+                int low = Math.Min(outside, inside);
+                int high = Math.Max(outside, inside);
+                if (high - low < 40)
+                {
+                    // A desktop the same brightness as the capsule: nothing to see.
+                    skipped++;
+                    continue;
+                }
+
+                bool found = false;
+                for (int x = Math.Min(outerX, innerX) + 1; x < Math.Max(outerX, innerX); x++)
+                {
+                    int value = Luma(bitmap.GetPixel(x, y));
+                    if (value > low + 8 && value < high - 8)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (found) blended++;
+            }
+        }
+
+        return (rows, blended, skipped);
     }
 
     /// <summary>Runs on the UI thread once an animation has landed.</summary>
@@ -1360,6 +1478,10 @@ internal sealed class NotchWindow : Form
         NativeMethods.SetWindowPos(
             Handle, IntPtr.Zero, live.Left, _top, 0, 0,
             NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
+
+        // The band follows. Nothing about a drag changes the capsule's size, so
+        // this is a move only — the coverage bitmap is not re-rasterised.
+        _edgeLayer?.MoveTo(new Rectangle(live.Left, _top, live.Width, live.Height));
         _dragUpdates++;
     }
 
@@ -1394,6 +1516,7 @@ internal sealed class NotchWindow : Form
             Rectangle live = LiveBounds;
             Bounds = live;            // resync WinForms after the raw moves
             ApplyRegion(live.Width, live.Height);
+            _edgeLayer?.Place(live, Scale(CornerRadius), AttachedRight);
             PersistPlacement();
             return;
         }
@@ -2196,6 +2319,7 @@ internal sealed class NotchWindow : Form
             Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE
             | NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_FRAMECHANGED);
+        _edgeLayer?.SyncOrder(Handle);
 
         if (wanted)
         {
@@ -2369,6 +2493,72 @@ internal sealed class NotchWindow : Form
         Check("webview transparent bg", _web.DefaultBackgroundColor == Color.Transparent,
             $"{_web.DefaultBackgroundColor.Name}");
 
+        // 2c. the free edge is ANTIALIASED. A window region can only cut whole
+        //     pixels, so the pixels that straddle the rounded corners are painted
+        //     by a second, click-through, layered window directly under the capsule
+        //     (NotchEdgeLayer) — the region supplies shape and hit-testing, the band
+        //     supplies the partial coverage the region cannot express. Both halves
+        //     of that are asserted: the band exists, is inert to the mouse and sits
+        //     under the capsule, and the edge it produces really is a blend rather
+        //     than a step (a claim no geometry check can see).
+        {
+            NotchEdgeLayer? band = _edgeLayer;
+            Check("antialiasing band exists", band is { Created: true },
+                $"handle=0x{(band?.Handle ?? IntPtr.Zero).ToInt64():X}");
+
+            long bandStyle = band is null || band.Handle == IntPtr.Zero
+                ? 0
+                : NativeMethods.GetWindowLongPtr(band.Handle, NativeMethods.GWL_EXSTYLE).ToInt64();
+            Check("band is layered and click-through",
+                (bandStyle & NativeMethods.WS_EX_LAYERED) != 0
+                    && (bandStyle & NativeMethods.WS_EX_TRANSPARENT) != 0
+                    && (bandStyle & NativeMethods.WS_EX_TOOLWINDOW) != 0,
+                $"exstyle=0x{bandStyle:X8}");
+
+            IntPtr under = band is null || band.Handle == IntPtr.Zero
+                ? IntPtr.Zero
+                : NativeMethods.GetWindow(Handle, NativeMethods.GW_HWNDNEXT);
+            Check("band sits directly under the capsule",
+                band is not null && under == band.Handle,
+                $"below=0x{under.ToInt64():X} band=0x{(band?.Handle ?? IntPtr.Zero).ToInt64():X}");
+
+            Rectangle live = LiveBounds;
+            int radius = Scale(NotchGeometry.CornerRadius);
+            int bandW = Math.Max(1, Math.Min(live.Width, radius + 2));
+            Rectangle bandRect = band?.Bounds ?? Rectangle.Empty;
+            Check("band tracks the capsule's free side",
+                band is not null
+                    && bandRect.Width == bandW && bandRect.Height == live.Height
+                    && bandRect.Top == live.Top
+                    && (band.AttachedRight ? bandRect.Left == live.Left : bandRect.Right == live.Right),
+                $"band={bandRect} capsule={live} right={live.Right}");
+
+            // What was actually uploaded, read back out of the bitmap the
+            // compositor was handed. `windowX` is in capsule coordinates.
+            int Alpha(int windowX, int windowY)
+            {
+                if (band is null || bandW <= 0) return -1;
+                int localX = band.AttachedRight ? windowX : windowX - (live.Width - bandW);
+                return band.AlphaAt(localX, windowY);
+            }
+
+            int arcRow = Math.Max(0, radius / 2);
+            int arcX = (int)Math.Floor(NotchGeometry.CapsuleFreeEdge(arcRow, live.Width, live.Height, radius));
+            int arcAlpha = Alpha(arcX, arcRow);
+            int runAlpha = Alpha(band?.AttachedRight == true ? 0 : live.Width - 1, live.Height / 2);
+            int clearAlpha = Alpha(band?.AttachedRight == true ? 0 : live.Width - 1, 0);
+            Check("the arc carries partial coverage", arcAlpha is > 0 and < 255,
+                $"alpha={arcAlpha}/255 at x={arcX},y={arcRow}");
+            Check("the straight run is opaque", runAlpha == 255, $"alpha={runAlpha}/255");
+            Check("the corner's outermost pixel is clear", clearAlpha == 0, $"alpha={clearAlpha}/255");
+
+            (int rows, int blended, int skipped) = MeasureFreeEdgeBlend();
+            Check("the free edge blends instead of stepping",
+                rows - skipped > 0 && blended >= (rows - skipped) * 0.6,
+                $"{blended} of {rows - skipped} measurable arc rows have a blended boundary "
+                    + $"({skipped} unmeasurable of {rows})");
+        }
+
         // 3. first-run anchor maths
         NativeMethods.GetCursorPos(out NativeMethods.POINT cursor);
         NativeMethods.RECT work = CursorMonitorWork();
@@ -2526,6 +2716,7 @@ internal sealed class NotchWindow : Form
         IntPtr beforeForeground = NativeMethods.GetForegroundWindow();
         NativeMethods.SetWindowPos(Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_SHOWWINDOW);
+        _edgeLayer?.SyncOrder(Handle);
         Application.DoEvents();
         IntPtr afterForeground = NativeMethods.GetForegroundWindow();
         Check("foreground unchanged", beforeForeground == afterForeground,
@@ -2685,6 +2876,7 @@ internal sealed class NotchWindow : Form
         bool topPinned = true;
         bool monotone = true;
         bool allInside = true;
+        bool bandFollowed = true;
         int samples = 0;
 
         for (double t = 0; t <= NotchGeometry.AnimationSeconds + 0.001; t += NotchGeometry.AnimationSeconds / 24)
@@ -2698,10 +2890,21 @@ internal sealed class NotchWindow : Form
             if (width < 1 || height < 1 || x < 0) allInside = false;
 
             // Apply the frame for real: this is the per-frame work the animation
-            // thread does, including a region rebuild at the animated size.
-            NativeMethods.SetWindowPos(Handle, IntPtr.Zero, x, y, width, height,
-                NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
-            ApplyRegion(width, height, Scale(CornerRadius));
+            // thread does — window, region, and the antialiasing band under both.
+            MoveCapsuleFrame(x, y, width, height);
+
+            // …and the band really is on that frame: a band left behind for even
+            // one frame of a 400 ms motion is a dark sliver at the old corner, so
+            // "the band follows" is asserted per frame rather than once at the end.
+            if (_edgeLayer is { } following)
+            {
+                Rectangle bandRect = following.Bounds;
+                int expectWidth = Math.Max(1, Math.Min(width, Scale(NotchGeometry.CornerRadius) + 2));
+                bool onFrame = bandRect.Width == expectWidth && bandRect.Height == height
+                    && bandRect.Top == y
+                    && (following.AttachedRight ? bandRect.Left == x : bandRect.Right == x + width);
+                if (!onFrame) bandFollowed = false;
+            }
 
             lastWidth = width;
             lastHeight = height;
@@ -2715,6 +2918,8 @@ internal sealed class NotchWindow : Form
             lastWidth == lampTarget.Width && lastHeight == lampTarget.Height,
             $"{lastWidth}x{lastHeight} vs {lampTarget.Width}x{lampTarget.Height}");
         check("animation frames stay on screen", allInside, "no degenerate frames");
+        check("the antialiasing band follows every animated frame", bandFollowed,
+            bandFollowed ? "band rect matched each frame" : "the band lagged the capsule");
 
         // Mid-flight retargeting must start from the CURRENT frame, not from the
         // original one (Panel.swift:26-31): otherwise an expand interrupted by a
@@ -3707,6 +3912,14 @@ internal sealed class NotchWindow : Form
          "rows":[{"id":"r-busy","title":"robot probe","child":false,"busy":false,"unread":false,
                   "needsAction":false,"failed":false}]}
         """;
+        // The same session, finished but not yet dismissed: this is the green
+        // lamp 「全部已读」 clears, and therefore the lamp the reported live-clock
+        // regression has to pass through.
+        const string robotUnread = """
+        {"type":"snapshot","generatedAt":940003,"counts":{"busy":0,"completed":1,"failed":0,"decision":0,"rows":1},
+         "rows":[{"id":"r-busy","title":"robot probe","child":false,"busy":false,"unread":true,
+                  "needsAction":false,"failed":false}]}
+        """;
 
         bool keepProbe = _pageProbeEnabled;
         bool keepExpanded = _expanded;
@@ -3767,6 +3980,124 @@ internal sealed class NotchWindow : Form
             ApplySize();
             PushGeometry(_liveWidth, _liveHeight, settled: true);
             await Task.Delay(150);
+
+            // ── 0. the LIVE clock: 全部已读 has to bring the robot back.
+            //       Reported 2026-09-15 — "after clearing every lamp the pill is
+            //       pure black". Every other section below PINS the clock, which
+            //       is what makes a frame reproducible but also what can hide a
+            //       step the live frame loop never reaches: `robotAdvance` only
+            //       runs inside the page's own frame loop, so a presence edge that
+            //       is never woken is invisible to a pinned assertion. Nothing
+            //       here pins, holds or reduces: this is the real clock, the real
+            //       loop, and only the snapshots are synthetic.
+            await core.ExecuteScriptAsync("__notchOrbit.probe.hold(false)");
+            await core.ExecuteScriptAsync("__notchOrbit.probe.reduce(false)");
+
+            // (a) the COLD START — the shape the report actually came in as. A
+            //     quiet Host's first snapshot does not change the layout at all
+            //     (target == the model's initial all-zero layout), so
+            //     `updateLayout` early-returns and nothing calls `wake()`: the
+            //     page paints one frame through the snapshot's own `render()` with
+            //     `robot.display === null` — a black pill — and the loop that would
+            //     have given the robot a pose never runs. Reloading the page and
+            //     replaying exactly what the ready handshake replays is the only
+            //     way to test it: the sections above have all stepped the clock by
+            //     hand already.
+            DeliverSnapshot(robotIdle);        // seeds the replay (a quiet capsule)
+            await Task.Delay(250);
+            _pageReady = false;
+            core.Reload();
+            var coldWait = Stopwatch.StartNew();
+            while (!_pageReady && coldWait.ElapsedMilliseconds < 15000) await Task.Delay(100);
+            await Task.Delay(1200);            // the replay + real frames
+            JsonElement coldRobotState = await Robot();
+            double coldBody = Body(await Ink());
+            JsonElement coldPaint = await Eval("__notchOrbit.probe.paint()");
+            check("a cold start with nothing to look at paints the robot",
+                coldBody > 40,
+                $"body={coldBody:0}px shows={coldRobotState.GetProperty("shows").GetBoolean()} "
+                    + $"display={coldRobotState.GetProperty("display").GetBoolean()} "
+                    + $"visibility={Num(coldRobotState, "visibility"):0.###} "
+                    + $"reason={coldRobotState.GetProperty("reason").GetString()} paint={coldPaint}");
+
+            await core.ExecuteScriptAsync("__notchOrbit.probe.reset()");
+
+            // (b) nothing to look at: the robot is what the pill shows
+            DeliverSnapshot(robotIdle);
+            await Task.Delay(700);
+            JsonElement liveIdle = await Robot();
+            double liveIdleBody = Body(await Ink());
+            check("live clock: an empty pill is the robot's",
+                liveIdle.GetProperty("shows").GetBoolean() && liveIdleBody > 40,
+                $"shows={liveIdle.GetProperty("shows").GetBoolean()} "
+                    + $"display={liveIdle.GetProperty("display").GetBoolean()} "
+                    + $"reason={liveIdle.GetProperty("reason").GetString()} body={liveIdleBody:0}px");
+
+            // (b) one finished, unread session: the green lamp takes the pill over
+            DeliverSnapshot(robotUnread);
+            await Task.Delay(2600);   // 1.22 s departure, then the lamp owns it
+            JsonElement liveLamp = await Robot();
+            double liveLampBody = Body(await Ink());
+            check("live clock: a green lamp sends the robot away",
+                !liveLamp.GetProperty("shows").GetBoolean() && liveLampBody < 40,
+                $"shows={liveLamp.GetProperty("shows").GetBoolean()} "
+                    + $"visibility={Num(liveLamp, "visibility"):0.###} "
+                    + $"reason={liveLamp.GetProperty("reason").GetString()} body={liveLampBody:0}px");
+
+            // (c) 全部已读, and the pill has nothing left to show
+            DeliverSnapshot(robotIdle);
+            await Task.Delay(1700);   // 0.82 s close + 0.32 s arrival + slack
+            JsonElement liveBack = await Robot();
+            JsonElement liveBackInk = await Ink();
+            double liveBackBody = Body(liveBackInk);
+            JsonElement liveBackPaint = await Eval("__notchOrbit.probe.paint()");
+            check("live clock: clearing every lamp brings the robot back",
+                liveBack.GetProperty("shows").GetBoolean() && liveBackBody > 40,
+                $"shows={liveBack.GetProperty("shows").GetBoolean()} "
+                    + $"display={liveBack.GetProperty("display").GetBoolean()} "
+                    + $"visibility={Num(liveBack, "visibility"):0.###} "
+                    + $"depart={liveBack.GetProperty("depart").GetBoolean()} "
+                    + $"live={liveBack.GetProperty("live").GetBoolean()} "
+                    + $"reason={liveBack.GetProperty("reason").GetString()} body={liveBackBody:0}px "
+                    + $"paint={liveBackPaint}");
+
+            // (d) the same clear, but through the door the user actually uses and
+            //     with the history a real session has: a turn is RUNNING (blue
+            //     lamp), it finishes (the success flight paints the green lamp),
+            //     and only then is 全部已读 pressed inside the EXPANDED panel —
+            //     where the canvas has no size at all (`body.expanded
+            //     #rest{display:none}`), so every render returns before it paints.
+            //     The pill the user then looks at is the one that collapsed after
+            //     that: a different route through `render()` than (a)–(c).
+            DeliverSnapshot(robotBusy);
+            await Task.Delay(1800);                // the robot departs; the pen waits
+            DeliverSnapshot(robotUnread);          // the turn finished: blue -> green
+            await Task.Delay(1600);                // the flight + settle
+            _expanded = true;
+            ApplySize();                           // Expand() + its geometry push
+            await Task.Delay(600);
+            await core.ExecuteScriptAsync("document.getElementById('clear').click()");
+            DeliverSnapshot(robotIdle);            // what the Host answers /seen with
+            await Task.Delay(1500);                // close + arrival, all while hidden
+            _expanded = false;
+            ApplySize();                           // Collapse() + its geometry push
+            await Task.Delay(900);
+            JsonElement foldedBack = await Robot();
+            JsonElement foldedInk = await Ink();
+            double foldedBody = Body(foldedInk);
+            JsonElement foldedPaint = await Eval("__notchOrbit.probe.paint()");
+            JsonElement foldedBox = await Eval(PageProbeScript);
+            check("live clock: 全部已读 in the expanded panel still ends on the robot",
+                foldedBack.GetProperty("shows").GetBoolean() && foldedBody > 40,
+                $"shows={foldedBack.GetProperty("shows").GetBoolean()} "
+                    + $"display={foldedBack.GetProperty("display").GetBoolean()} "
+                    + $"visibility={Num(foldedBack, "visibility"):0.###} "
+                    + $"reason={foldedBack.GetProperty("reason").GetString()} body={foldedBody:0}px "
+                    + $"paint={foldedPaint} boxes={foldedBox.GetString()}");
+
+            // The sections below want the reproducible clock back.
+            await core.ExecuteScriptAsync("__notchOrbit.probe.reset()");
+            await core.ExecuteScriptAsync("__notchOrbit.probe.hold(true)");
 
             // ── 1. the vendored engine is alive, and writes the attributes the
             //       page parses (a polyline `d`, eyes as rects with a transform)
@@ -4745,6 +5076,68 @@ internal sealed class NotchWindow : Form
         check("region boxes the window",
             big[0].Top == 0 && big[^1].Bottom == 390 && big.TrueForAll(r => r.Left == 0 || r.Left > 0),
             $"rects={big.Count} span={big[0].Top}-{big[^1].Bottom}");
+
+        // ---- the antialiased free edge (NotchEdgeLayer) -------------------
+        // The band and the region have to agree about the corner without ever
+        // painting the same pixel: the region owns whole pixels only (a partially
+        // covered pixel it claimed would be painted solid black and the band's
+        // partial coverage for it would never be seen), and the band owns exactly
+        // the pixels the region leaves out. Both halves are checked here, in pure
+        // arithmetic, so a regression cannot hide behind a screenshot.
+        {
+            const int w = 57, h = 66, r = 24;
+            double quarter = Math.PI * r * r / 4;
+
+            double cornerArea = 0;
+            for (int y = 0; y < r; y++)
+            {
+                for (int x = w - r; x < w; x++)
+                {
+                    cornerArea += NotchGeometry.CapsuleCoverage(x, y, w, h, r, 8) / 255.0;
+                }
+            }
+
+            check("corner coverage sums to the corner's area",
+                Math.Abs(cornerArea - quarter) / quarter < 0.08,
+                $"{cornerArea:0.#}px vs πr²/4={quarter:0.#}px ({(cornerArea - quarter) / quarter * 100:0.#}%)");
+
+            check("the arc's outermost pixel is empty and the run reaches the edge",
+                NotchGeometry.CapsuleCoverage(w - 1, 0, w, h, r, 8) == 0
+                    && NotchGeometry.CapsuleCoverage(w - 1, h / 2, w, h, r, 8) == 255,
+                $"corner={NotchGeometry.CapsuleCoverage(w - 1, 0, w, h, r, 8)} "
+                    + $"run={NotchGeometry.CapsuleCoverage(w - 1, h / 2, w, h, r, 8)}");
+
+            int partial = 0;
+            int arcRows = 0;
+            for (int y = 0; y < r; y++)
+            {
+                int edge = (int)Math.Floor(NotchGeometry.CapsuleFreeEdge(y, w, h, r));
+                if (edge < 0 || edge >= w) continue;
+                arcRows++;
+                int alpha = NotchGeometry.CapsuleCoverage(edge, y, w, h, r, 8);
+                if (alpha > 0 && alpha < 255) partial++;
+            }
+
+            check("most arc rows carry a partially covered pixel",
+                arcRows > 0 && partial >= arcRows * 0.7,
+                $"{partial} of {arcRows} rows");
+
+            bool regionInsideTheEdge = true;
+            foreach (NotchRect span in NotchGeometry.CapsuleRegion(w, h, r, attachedRight: false))
+            {
+                for (int y = span.Top; y < span.Bottom; y++)
+                {
+                    if (span.Right > Math.Floor(NotchGeometry.CapsuleFreeEdge(y, w, h, r)))
+                    {
+                        regionInsideTheEdge = false;
+                        break;
+                    }
+                }
+            }
+
+            check("the region never claims a partially covered pixel", regionInsideTheEdge,
+                "every row's region stops at or before floor(free edge)");
+        }
 
         return lines;
     }

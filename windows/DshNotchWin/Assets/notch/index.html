@@ -912,7 +912,10 @@
          robot's own artwork and must not freeze. */
       if (robot.live) {
         robot.previous = robot.display;
-        robot.display = idle ? director.displayPose(t) : livePose(t);
+        /* `livePose` is `displayPose || neutralFallback`: the director can be
+           between clips, and a null pose is a black pill — the one failure this
+           page has no way to show. */
+        robot.display = livePose(t);
       }
 
       if (reduced()) {
@@ -1236,6 +1239,9 @@
       if (reduced()) {
         updateLayout(now(), !cold);
         render();
+        /* Reduce Motion still needs the machine stepped once: the visibility
+           the robot is drawn at is decided inside `robotAdvance`. */
+        wake();
         return;
       }
 
@@ -1266,6 +1272,15 @@
       startNextFlight();
       updateLayout(now(), !cold);
       render();
+
+      /* The model has changed, so the clock has to be running — and `wake()` is
+         the only thing that starts it. `updateLayout` wakes the loop only when the
+         layout TARGET differs, and a snapshot that changes nothing a lamp can see
+         (every weight already 0: a quiet Host, or the state 「全部已读」 leaves
+         behind) is precisely the case that used to leave the loop dead, with the
+         robot's presence machine never stepped and the pill therefore black.
+         `wake()` is idempotent — one pending frame, however many snapshots. */
+      wake();
     }
 
     // ---- renderer (StatusOrbitView, StatusOrbit.swift:495-641) ------
@@ -2205,6 +2220,21 @@
     if (!RobotPose.init({ clip: 'blink' })) robot.reason = 'no-renderer:' + RobotPose.error;
 
     render();
+
+    /* …and START the presentation clock, which is not the same thing as painting
+       one frame. `robotAdvance` — the whole presence machine: which side of the
+       edge the robot is on, and the pose it is drawn from — only ever runs inside
+       the `pump()` frame loop, and that loop is only ever started by `wake()`.
+       Until Phase 5's robot existed, the loop was owned by the status lamps and
+       `updateLayout` started it whenever a lamp appeared or left; a page whose
+       data changes nothing is therefore a page whose clock never starts. That is
+       the reported failure of 2026-09-15 ("机器人头像没了"): a cold capsule with a
+       quiet Host paints its one frame through the snapshot's own `render()` with
+       `robot.display` still null — pure black — and stays there, because nothing
+       would ever step the machine that gives the robot a pose. `wanted()` keeps
+       the loop alive while the robot is on screen, so starting it here cannot
+       leave a frame unpaid. */
+    wake();
 
     return {
       snapshot,

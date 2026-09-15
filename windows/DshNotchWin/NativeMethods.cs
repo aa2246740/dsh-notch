@@ -170,6 +170,138 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
 
+    // ---- per-pixel alpha (the capsule's antialiased free edge) ----------
+    //
+    // A window region is a binary mask: SetWindowRgn has no partial coverage, so
+    // the rounded corners the region draws are stair-stepped against whatever is
+    // behind the capsule. Windows offers exactly one way to blend a top-level
+    // window with per-pixel alpha — WS_EX_LAYERED plus UpdateLayeredWindow — and
+    // it only works for a window whose content the process supplies as a bitmap
+    // (a WebView2 child paints its own pixels and cannot contribute to a layered
+    // surface). The capsule therefore keeps its region for shape and hit-testing,
+    // and a second, small, click-through layered window paints the antialiased
+    // band over the region's steps.
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct SIZE
+    {
+        public int cx;
+        public int cy;
+
+        internal SIZE(int width, int height)
+        {
+            cx = width;
+            cy = height;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal struct BLENDFUNCTION
+    {
+        public byte BlendOp;
+        public byte BlendFlags;
+        public byte SourceConstantAlpha;
+        public byte AlphaFormat;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct BITMAPINFOHEADER
+    {
+        public int biSize;
+        public int biWidth;
+        public int biHeight;
+        public short biPlanes;
+        public short biBitCount;
+        public int biCompression;
+        public int biSizeImage;
+        public int biXPelsPerMeter;
+        public int biYPelsPerMeter;
+        public int biClrUsed;
+        public int biClrImportant;
+    }
+
+    internal const byte AC_SRC_OVER = 0x00;
+    internal const byte AC_SRC_ALPHA = 0x01;
+    internal const uint ULW_ALPHA = 0x00000002;
+    internal const uint DIB_RGB_COLORS = 0;
+    internal const int BI_RGB = 0;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool UpdateLayeredWindow(
+        IntPtr hWnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize,
+        IntPtr hdcSrc, ref POINT pptSrc, int crKey, ref BLENDFUNCTION pblend, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    internal static extern IntPtr GetDC(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    internal static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+    [DllImport("gdi32.dll")]
+    internal static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+    [DllImport("gdi32.dll")]
+    internal static extern bool DeleteDC(IntPtr hdc);
+
+    [DllImport("gdi32.dll")]
+    internal static extern IntPtr SelectObject(IntPtr hdc, IntPtr hObject);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    internal static extern IntPtr CreateDIBSection(
+        IntPtr hdc, ref BITMAPINFOHEADER pbmi, uint usage, out IntPtr ppvBits,
+        IntPtr hSection, uint offset);
+
+    // ---- the antialiasing band's own window class -----------------------
+    internal const int GW_HWNDNEXT = 2;
+    internal const int HTTRANSPARENT = -1;
+    internal const int MA_NOACTIVATE = 3;
+    internal const uint WM_PAINT = 0x000F;
+    internal const uint WM_ERASEBKGND = 0x0014;
+    internal const uint WM_NCHITTEST = 0x0084;
+    internal const uint WM_MOUSEACTIVATE = 0x0021;
+    internal const uint WM_DESTROY = 0x0002;
+    internal const int WS_POPUP = unchecked((int)0x80000000);
+    internal const int SW_SHOWNOACTIVATE = 4;
+
+    internal delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct WNDCLASSEX
+    {
+        public int cbSize;
+        public uint style;
+        public WndProcDelegate lpfnWndProc;
+        public int cbClsExtra;
+        public int cbWndExtra;
+        public IntPtr hInstance;
+        public IntPtr hIcon;
+        public IntPtr hCursor;
+        public IntPtr hbrBackground;
+        public string? lpszMenuName;
+        public string lpszClassName;
+        public IntPtr hIconSm;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern ushort RegisterClassEx(ref WNDCLASSEX lpwcx);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern IntPtr CreateWindowEx(
+        int dwExStyle, string lpClassName, string lpWindowName, int dwStyle,
+        int x, int y, int nWidth, int nHeight,
+        IntPtr hWndParent, IntPtr hMenu, IntPtr hInstance, IntPtr lpParam);
+
+    [DllImport("user32.dll")]
+    internal static extern bool DestroyWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    internal static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    internal static extern IntPtr DefWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    internal static extern IntPtr GetModuleHandle(string? lpModuleName);
+
     [DllImport("user32.dll")]
     internal static extern int GetWindowRgnBox(IntPtr hWnd, out RECT lprc);
 

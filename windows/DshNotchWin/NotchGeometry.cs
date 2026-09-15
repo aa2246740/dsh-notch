@@ -168,6 +168,114 @@ internal static class NotchGeometry
         Math.Max(CornerInsetFromTop(y, r), CornerInsetFromBottom(y, r, h));
 
     /// <summary>
+    /// The ideal, un-quantised free edge at the centre of row <paramref name="y"/>:
+    /// the x the silhouette's boundary really passes through, before any region
+    /// rounds it to whole pixels. Described with the free side on the RIGHT (a
+    /// left-attached capsule); mirror it for the other edge.
+    ///
+    /// The region builder is the region's own business, but this is what the
+    /// antialiasing band rasterises and what the self-test checks the region
+    /// against: a row that claimed a pixel straddling this line would paint a
+    /// hard black step where the ideal edge is partial, which is exactly the
+    /// stair-stepping the band exists to remove.
+    /// </summary>
+    internal static double CapsuleFreeEdge(int y, int w, int h, int r)
+    {
+        int radius = Math.Clamp(r, 0, Math.Min(Math.Max(1, w) / 2, Math.Max(1, h) / 2));
+        if (radius <= 0) return w;
+
+        double inside;
+        if (y < radius)
+        {
+            double dy = radius - (y + 0.5);
+            inside = Math.Sqrt(Math.Max(0.0, (double)radius * radius - dy * dy));
+        }
+        else if (y > h - 1 - radius)
+        {
+            double dy = radius - ((h - 1 - y) + 0.5);
+            inside = Math.Sqrt(Math.Max(0.0, (double)radius * radius - dy * dy));
+        }
+        else
+        {
+            return w;
+        }
+
+        return w - radius + inside;
+    }
+
+    /// <summary>
+    /// Is the point <c>(x, y)</c> inside the capsule silhouette? The attached side
+    /// is the screen edge (a straight cut) and the free side is a rounded
+    /// rectangle whose two corners share one radius, so the only thing that has to
+    /// be tested is which side of a quarter circle the point is on.
+    ///
+    /// Coordinates are the window's own, with y running down and the free side on
+    /// the RIGHT; the antialiasing band mirrors x for a right-attached capsule.
+    /// </summary>
+    internal static bool CapsuleContains(double x, double y, int w, int h, int r)
+    {
+        if (x < 0 || y < 0 || x > w || y > h) return false;
+
+        int radius = Math.Clamp(r, 0, Math.Min(Math.Max(1, w) / 2, Math.Max(1, h) / 2));
+        if (radius <= 0) return true;
+
+        double cx = w - radius;
+        if (y < radius)
+        {
+            if (x <= cx) return true;
+            double dx = x - cx, dy = y - radius;
+            return dx * dx + dy * dy <= (double)radius * radius;
+        }
+
+        if (y > h - radius)
+        {
+            if (x <= cx) return true;
+            double dx = x - cx, dy = y - (h - radius);
+            return dx * dx + dy * dy <= (double)radius * radius;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// How much of the pixel whose top-left corner is <c>(px, py)</c> the
+    /// silhouette covers, 0..255 — the alpha the antialiasing band paints it with.
+    ///
+    /// Supersampled on a <paramref name="samples"/> x <paramref name="samples"/>
+    /// grid rather than integrated analytically: the answer only has to be right to
+    /// a fraction of one 8-bit level, the grid form is the same code for any corner
+    /// shape, and the one expensive case (a pixel on the arc) is a few dozen
+    /// multiplications. The straight run between the corners has a "fully covered"
+    /// fast path, which is what keeps a whole band cheap.
+    /// </summary>
+    internal static int CapsuleCoverage(int px, int py, int w, int h, int r, int samples)
+    {
+        if (w <= 0 || h <= 0) return 0;
+        if (px < 0 || py < 0 || px >= w || py >= h) return 0;
+
+        int radius = Math.Clamp(r, 0, Math.Min(w / 2, h / 2));
+        if (radius <= 0) return 255;
+
+        // Entirely inside the straight run: the free edge is the window's own edge
+        // there, so every pixel of that row is fully covered.
+        if (py >= radius && py + 1 <= h - radius) return 255;
+
+        if (samples < 1) samples = 1;
+
+        int hits = 0;
+        for (int sy = 0; sy < samples; sy++)
+        {
+            double y = py + (sy + 0.5) / samples;
+            for (int sx = 0; sx < samples; sx++)
+            {
+                if (CapsuleContains(px + (sx + 0.5) / samples, y, w, h, radius)) hits++;
+            }
+        }
+
+        return (int)Math.Round(hits * 255.0 / (samples * samples));
+    }
+
+    /// <summary>
     /// How far the corner arc cuts into a row measured from the top of the
     /// capsule. The arc's centre is at (r, r); for a row at distance dy from the
     /// top of the corner (dy in [0, r]) the circle occupies the columns within
