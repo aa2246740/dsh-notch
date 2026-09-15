@@ -1224,3 +1224,87 @@ after : ''      # GetValueNames() 中已无 DshNotchWin
 - **DSH 退出不会关掉胶囊**：用户只要求"启动时打开"。DSH 关了之后胶囊重连不上，停在待机/最后状态，托盘右键仍可退出。若以后要它随 DSH 一起收，加一条 dispose 钩子即可 —— 但那会让 DSH 的每次重启都闪一次界面，所以没有默认打开。
 - **只有加载了 dsh-notch 插件的 profile 会拉起胶囊**（当前就是 `web`）。别的 profile 里没有 Host，也就没有胶囊 —— 与"胶囊只在有 Host 时才有数据"一致。
 - 本次端到端是**热加载**触发的（同一份 patch 组合，`--dump-config` 另外证明了冷启动会解析出同一个 entry）。真正"重启 DSH"这一动作留给用户下次开机/重启时自然验证。
+
+---
+
+### Phase 9 — 机器人不出现的真因 + 自由边抗锯齿（2026-09-15，**已完成 ✅**）
+
+**用户报障（原话）**：「deepseek-notch的机器人动画貌似出问题了，现在没有显示机器人头像，而且窗口不圆滑，有锯齿」。追问后确认现象是：**点过「全部已读」、四种状态灯全灭之后，胶囊仍是一块纯黑，没有机器人**（"仍是" = 之前就是黑的）。
+
+两个现象、两个根因，都不是"上游行为"，也不是玄学 —— 两条都先在自检里复现成 FAIL，再改，再转 PASS。
+
+#### 9.1 机器人不出现：页面的帧循环根本没被启动过
+
+根因在页面（`Assets/notch/index.html`），不在 C#：
+
+- 机器人的整个"在场状态机"（`robotAdvance`：该不该在屏上、画哪一帧姿态）**只在 `pump()` 帧循环里跑**；
+- 而这个循环**只由 `wake()` 启动**，`wake()` 的调用点只有三处：`updateLayout()`（仅当布局目标真的变了才走到）、`startNextFlight()`/`armFinish()`（状态灯有飞行时）、以及探针钩子；
+- 一次"安静的"快照 —— 目标布局和模型初始的全零布局**完全相同**（Host 里没有任何灯：没有运行中、没有未读、没有失败、没有待决策）——会在 `updateLayout` 的 `if (!differs(target, model.target) && presentationId === model.layoutFlightId) return;` 处**直接返回，永不 `wake()`**；
+- 于是页面只在 `snapshot()` 末尾那次 `render()` 里画了一帧：那一刻 `robot.display` 还是 `null`（状态机没跑过），画布上什么都没有 → **纯黑胶囊**，并且此后**再也不会自己好**（没有任何东西会去启动那个循环）。DSH 冷启动、且当时没有任何未读会话时，这一个状态就是它的**初始状态**。
+
+为什么 Phase 5 的 12 项机器人自检全 PASS 却没抓到：那些断言全部**自己 `pin()`/`advance()`/`robotStep()` 把时钟推着走**——它们验证的是"给定一帧，画得对不对"，而这一次坏的是"**根本没有人去要那一帧**"。
+
+修复（3 处，都是"让循环一定有个启动者"）：
+
+| 位置 | 改动 |
+|---|---|
+| 页面初始化（`RobotPose.init` 之后） | 补一次 `wake()`：一页新文档、一个安静的 Host，也要有帧循环（这是"有没有机器人"的唯一开关） |
+| `snapshot()`（两条出口） | 无论布局目标变没变，最后都 `wake()`（`wake()` 幂等：只挂一帧，多少条快照都一样） |
+| `robotAdvance()` | `robot.display = livePose(t)`（原为 `idle ? displayPose(t) : livePose(t)`）：`livePose = displayPose \|\| neutralFallback`，姿态**永不为 null** —— null 姿态就是纯黑胶囊，这是本页最没法解释的失败 |
+
+#### 9.2 锯齿：窗口区域是二值掩码，没有部分覆盖
+
+胶囊的形状来自 `SetWindowRgn`（Phase 1 的决策：色键透明会吞掉命中测试）。区域是**二值**的：一行要么要这个像素、要么不要，`SetWindowRgn` 没有"半个像素"这种东西 —— 所以 16 pt 圆角的每一行都只能整像素地往外挪，边缘就是楼梯。而页面这边也救不了：WebView2 的 `DefaultBackgroundColor=Transparent` 是拿自己的表面（黑）去合成的，CSS `border-radius` 的抗锯齿像素只会变成**黑边**，不是与桌面的混合。
+
+修法是把这件事拆成两半（`windows/DshNotchWin/NotchEdgeLayer.cs`，新增）：
+
+- **胶囊窗口保留区域**：它既是形状，也是命中测试的来源；区域仍按整像素切，规则不变；
+- **另加一条很小的高层窗口**（`WS_EX_LAYERED` + `WS_EX_TRANSPARENT` + `TOOLWINDOW` + `NOACTIVATE` + `TOPMOST`），只贴在**自由边**那一条带（宽 `radius+2`，高 = 胶囊高），用 `UpdateLayeredWindow` 上传 32bpp 预乘位图，alpha = 该像素被理想圆角覆盖的比例（每像素 8×8 超采样，中间直段有"全覆盖"快路径）；
+- 二者互补且**不重叠**：区域只吃"整像素被完全覆盖"的像素（`CornerInsetFromTop` 的 `ceil` 已经把跨理想边缘的那个像素排除在外），带只画区域剩下的那些像素 —— 合成结果就是理想轮廓；
+- 带在 z 序上**紧贴胶囊下方**（`SetWindowPos(band, capsule, ...)`），只在样式变动时重排，逐帧移动一律 `SWP_NOZORDER`（否则覆盖层会每帧爬到用户前台窗口之上）；带对鼠标完全透明（`WS_EX_TRANSPARENT` + `WM_NCHITTEST → HTTRANSPARENT`）。
+
+所有"移动胶囊"的地方统一走 `NotchWindow.MoveCapsuleFrame(x, y, w, h)`（窗口 + 区域 + 带一起落地）：`ApplySizeNow`、`UpdateGeometryTarget` 的第一帧、动画线程逐帧、拖拽（`MoveTo`，纯移动不重算位图）、手势结束重排。相位内 400 ms 的每一帧都断言"带还在这一帧上"（漏一帧就是旧圆角处一条黑边）。
+
+#### 9.3 改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `Assets/notch/index.html` | 初始化补 `wake()`；`snapshot()` 两条出口补 `wake()`；`robotAdvance` 用 `livePose` 兜底姿态 |
+| `NotchEdgeLayer.cs`（新增，~430 行） | 抗锯齿带：窗口类/样式/z 序/门闩、预乘 DIB、覆盖度光栅化、`Place`/`MoveTo`/`SyncOrder`/`AlphaAt` |
+| `NotchGeometry.cs` | 纯数学：`CapsuleContains`、`CapsuleCoverage`（8×8 超采样 + 直段快路径）、`CapsuleFreeEdge`（理想自由边，供区域对账） |
+| `NativeMethods.cs` | `UpdateLayeredWindow`/DIB/`RegisterClassEx`/`CreateWindowEx`/`DefWindowProc`/`GW_HWNDNEXT` 等 |
+| `NotchWindow.cs` | 字段 + 创建/释放带；`MoveCapsuleFrame` 统一移动；4 处 z 序再断言；`MeasureFreeEdgeBlend`（屏幕级判定）；§2c 与 §几何/数据自检新增 14 项 |
+
+#### 9.4 实测证据
+
+**自检 139 → 157 项全 PASS**（`--selftest`，exit code = 失败项数 = 0）。新增项分三层：
+
+```
+[PASS] a cold start with nothing to look at paints the robot   body=379px shows=True display=True reason=idle
+   ↑ 修复前这一项是 FAIL：body=0px shows=True display=False reason=init renders=3
+     （shows=True = "该显示机器人"，display=False = "没有姿态"，reason=init = 状态机一次都没跑）
+[PASS] the arc carries partial coverage           alpha=24/255 at x=54,y=12
+[PASS] band sits directly under the capsule       below=0x16083C band=0x16083C
+[PASS] the free edge blends instead of stepping   24 of 24 measurable arc rows have a blended boundary
+[PASS] the antialiasing band follows every animated frame  band rect matched each frame
+[PASS] corner coverage sums to the corner's area  452.4px vs πr²/4=452.4px (0%)
+[PASS] the region never claims a partially covered pixel
+```
+
+其中最要紧的一项是**屏幕级**的：抓下胶囊所在的那块屏幕，对两条圆角弧的每一行，取"理想边缘外侧 3 px"和"内侧 3 px"的亮度，然后在两者之间找**既不是外、也不是内**的像素。二值区域给不出这种像素（整像素跳变），所以这一项直接就是"还有没有锯齿"的判据，而且不依赖壁纸颜色（同一行内比较，背景与胶囊填充太接近的行记为"不可测"而不是失败）。
+
+**真机 A/B（同一二进制，只换页面文件）**：写了一个脚本化的假 Host（`_tmp/fake-notch-host.mjs`，SSE + Bearer + runtime.json，喂"一个不点灯的空闲会话"），用 `DSH_NOTCH_RUNTIME_FILE` 指过去，让 `--shot` 走**真实传输、真实时钟、真实窗口**：
+
+- 旧页面 → `windows/shots/p9-coldstart-before.png`：**纯黑胶囊**（用户看到的就是这个）；
+- 新页面 → `windows/shots/p9-coldstart-after.png`：**机器人（灰头 + 两只眼睛）**。
+
+**锯齿的像素证据**（8× 放大，`windows/shots/p9-edge-before.png` / `p9-edge-after.png`）：旧的是纯黑与桌面之间的整像素台阶；新的边缘出现连续的部分覆盖像素；展开面板（720×129）同一圈角同样如此（`p9-expanded-edge.png`）。真机现网截图见 `windows/shots/p9-live.png`（蓝色运行灯 + 平滑圆角）。
+
+> 这 6 张 p9 截图是**工作区里的验收产物**：`windows/shots/*.png` 被 `.gitignore` 的 `*.png` 排除，与 §6.6 里已有的 6 张一样，要入库得 `git add -f`。
+
+#### 9.5 已知边界（诚实记录）
+
+- **抗锯齿带是第二个高层窗口**：它与胶囊逐帧同移（同一处代码），但在极端卡顿下理论上可能有一帧不同步（表现为旧圆角处一条极窄的暗边）。它只占自由边一条 26×H 的带，纯移动不重算位图，所以代价是每帧一次 `SetWindowPos` + 一次 `UpdateLayeredWindow`（只在几何变化时）。
+- **贴屏幕的那一侧、以及上下两条边没有抗锯齿** —— 它们是轴对齐的直线，本来就没有可抗的锯齿。
+- **帧循环现在会长期运行**：修好之后，"安静的胶囊"也会以 60 fps 走机器人自己的眨眼/动作调度（与上游 `TimelineView` 的语义一致）。代价是空载时也有一个持续的 rAF 循环；换来的是"机器人一定在动"。
+- 本次仍然**没有**为胶囊加投影（Phase 1 的决策不变：`CS_DROPSHADOW` 会闪），也没有把形状交给 DWM 圆角（半径不可自定义，且四个角全圆）。
