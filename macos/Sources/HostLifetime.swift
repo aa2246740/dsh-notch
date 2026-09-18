@@ -23,7 +23,7 @@ final class HostLifetimeMonitor {
   private var deadSince: TimeInterval?
   private var finished = false
 
-  init(runtimeURL: URL, grace: TimeInterval = 2, interval: TimeInterval = 1,
+  init(runtimeURL: URL, grace: TimeInterval = 0, interval: TimeInterval = 1,
        probe: @escaping (Int32) -> Liveness = HostLifetimeMonitor.liveness,
        onExit: @escaping () -> Void) {
     self.runtimeURL = runtimeURL

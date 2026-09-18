@@ -69,7 +69,7 @@ macos/.build/release/dsh-notch
 
 资源检查应输出 `IDLE_RESOURCES=10/10`。最后一条命令启动连接真实 DSH 会话的 Notch；首次启动时保持这个终端窗口打开。
 
-Notch 会跟随 `runtime.json` 中的 Host 进程：Host 退出后约 2–3 秒自动关闭，单独热更新启动的 Notch 也一样。临时请求失败不会让它退出。仅关闭 DSH 的窗口、但 Host 仍在后台运行时，Notch 会继续显示任务；再次启动 Host 后，按原来的入口启动 Notch。离线演示不受这条规则影响。
+Notch 会跟随 `runtime.json` 中的 Host 进程：收到进程退出通知后立即关闭，不再人为等待 2 秒，单独热更新启动的 Notch 也一样。临时请求失败不会让它退出。仅关闭 DSH 的窗口、但 Host 仍在后台运行时，Notch 会继续显示任务；再次启动 Host 后，按原来的入口启动 Notch。离线演示不受这条规则影响。App 壳可接入 [退出与快速重启联动](desktop/README.md)，接管已有 Notch，并在它恰好退出时补开一份。
 
 如果你使用的 DSH.app 已经在管理一份 Notch，只更新那份程序，避免同时启动两个。移动程序或接入 App 壳时，要把 `dsh-notch` 和同一构建目录的 `DshNotch_DshNotch.bundle` 一起放到目标目录，再重新启动 Notch 程序。单独安装 Host 插件不会自动配置登录启动，也不会替换某个 App 壳里的旧程序。
 

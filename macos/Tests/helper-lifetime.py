@@ -25,6 +25,7 @@ with tempfile.TemporaryDirectory(prefix='notch-lifetime-') as temp:
             start = time.monotonic()
             assert helper.wait(timeout=6) == 0, 'Helper did not terminate cleanly'
             elapsed = time.monotonic() - start
+            assert elapsed < 1, f'Unexpected shutdown delay: {elapsed:.2f}s'
         assert 'closing helper' in (root / 'helper.log').read_text()
         print(f'PASS built helper: stays through HTTP failures, exits after owner death in {elapsed:.2f}s')
     finally:
