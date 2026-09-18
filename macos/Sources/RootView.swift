@@ -566,16 +566,8 @@ struct RootView: View {
     return model.isPillHovered ? 42 : 38
   }
 
-  /// Plan text and other long details live in `question.detail`. Use the full
-  /// screen cap (visible height minus 100pt top and bottom) so chips stay on screen.
-  private var longAskDetail: Bool {
-    guard let ask = model.activeActionRow?.ask else { return false }
-    return ask.questions.contains { ($0.detail ?? "").count > 240 }
-  }
-
   private var targetHeight: CGFloat {
     if model.expanded {
-      if longAskDetail { return model.maximumExpandedHeight }
       let floor: CGFloat = 120
       return min(max(model.measuredContentHeight, floor), model.maximumExpandedHeight)
     }
@@ -643,7 +635,9 @@ struct RootView: View {
     // The native panel owns geometry animation; its body fills the same bounds.
     .transaction { $0.animation = nil }
     .onPreferenceChange(ContentHeightPreferenceKey.self) { height in
-      guard model.expanded else { return }
+      // Expanded content stays mounted during collapse. Keep its latest size:
+      // a new question can arrive before a quick reopen, without emitting a
+      // second preference change. Discarding it would retain the old viewport.
       guard height.isFinite, height > 40 else { return }
       model.measuredContentHeight = height
     }
@@ -653,23 +647,17 @@ struct RootView: View {
     }
   }
 
-  @ViewBuilder private var expandedSurface: some View {
-    if longAskDetail {
-      // Long Markdown keeps the choices visible below its own scrolling body.
+  private var expandedSurface: some View {
+    // One intrinsic measurement and one viewport for questions, Markdown, and
+    // task lists. Character counts and nested viewport caps don't measure the
+    // rendered content. Only overflow at the final screen cap needs an indicator.
+    ScrollView(.vertical, showsIndicators: model.measuredContentHeight > model.maximumExpandedHeight + 1) {
       expandedContent
-    } else {
-      // Measure intrinsic content, not the capped viewport. Oversized questions
-      // grow to the screen limit and remain scrollable; short ones shrink again.
-      // During expansion the native viewport is temporarily smaller than its
-      // destination. Only genuine overflow at the screen cap needs an indicator.
-      ScrollView(.vertical, showsIndicators: model.measuredContentHeight > model.maximumExpandedHeight + 1) {
-        expandedContent
-          .frame(maxWidth: .infinity, alignment: .topLeading)
-          .fixedSize(horizontal: false, vertical: true)
-          .background(GeometryReader { geo in
-            Color.clear.preference(key: ContentHeightPreferenceKey.self, value: geo.size.height)
-          })
-      }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(GeometryReader { geo in
+          Color.clear.preference(key: ContentHeightPreferenceKey.self, value: geo.size.height)
+        })
     }
   }
 
@@ -729,7 +717,6 @@ struct RootView: View {
       }
     }
     .padding(14)
-    .frame(maxHeight: longAskDetail ? .infinity : nil, alignment: .topLeading)
   }
 
   // MARK: - ROW B: Approval View (✓ / ✕ Circular Buttons)
@@ -837,16 +824,8 @@ struct RootView: View {
       }
 
       if let detail = question.detail, !detail.isEmpty {
-        let body = NotchMarkdownView(source: detail)
+        NotchMarkdownView(source: detail)
           .textSelection(.enabled)
-        if longAskDetail {
-          ScrollView {
-            body
-          }
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-          body
-        }
       }
 
       // Option Chips (Figma #23:100, #22:21)
@@ -937,7 +916,6 @@ struct RootView: View {
         .padding(.top, 4)
       }
     }
-    .frame(maxHeight: longAskDetail ? .infinity : nil, alignment: .topLeading)
   }
 
   // MARK: - Glance Session List with Running & Completion Overview
@@ -989,8 +967,7 @@ struct RootView: View {
           .foregroundStyle(.white.opacity(0.35))
           .padding(.vertical, 6)
       } else {
-        ScrollView {
-          VStack(spacing: 4) {
+        VStack(spacing: 4) {
             ForEach(model.rows) { row in
               Button {
                 model.pick(row.id)
@@ -1045,9 +1022,7 @@ struct RootView: View {
               }
               .buttonStyle(.plain)
             }
-          }
         }
-        .frame(maxHeight: 180)
       }
     }
   }

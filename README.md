@@ -121,6 +121,7 @@ npm run test:outcome
 npm run test:motion
 npm run test:geometry
 npm run test:scrollbar
+npm run test:expanded-height
 npm run test:idle
 npm run build:macos
 ```
