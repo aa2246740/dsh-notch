@@ -13,6 +13,11 @@ enum NotchTokens {
   static let deepSeekBlue = Color(red: 0.302, green: 0.420, blue: 0.996)   // #4D6BFE
   static let bodyBackground = Color.black
   static let secondaryText = Color.white.opacity(0.72)
+  // Reading colors for translucent glass; compact motion keeps its brand hues.
+  static let runningText = Color(red: 0.76, green: 0.83, blue: 1.0)    // #C2D4FF
+  static let runningPip = Color(red: 0.56, green: 0.69, blue: 1.0)     // #8FB0FF
+  static let completeText = Color(red: 0.64, green: 0.91, blue: 0.72)  // #A3E8B8
+  static let failedText = Color(red: 1.0, green: 0.66, blue: 0.60)     // #FFA899
   /// Pinned to the expanded width and trailing-aligned.
   /// The compact capsule sits in the darkest end. Native glass keeps a lighter
   /// veil over the expanded reading area; the HUD fallback retains its old tint.
@@ -931,10 +936,10 @@ struct RootView: View {
       HStack(spacing: 6) {
         if model.busyCount > 0 {
           HStack(spacing: 4) {
-            Circle().fill(NotchTokens.deepSeekBlue).frame(width: 6, height: 6)
+            Circle().fill(NotchTokens.runningPip).frame(width: 6, height: 6)
             Text("\(model.busyCount) 进行中")
               .font(.system(size: 10, weight: .semibold))
-              .foregroundStyle(NotchTokens.deepSeekBlue)
+              .foregroundStyle(.white.opacity(0.95))
           }
           .padding(.horizontal, 6)
           .padding(.vertical, 3)
@@ -943,10 +948,10 @@ struct RootView: View {
 
         if model.completedUnreadCount > 0 {
           HStack(spacing: 5) {
-            Circle().fill(NotchTokens.greenComplete).frame(width: 6, height: 6)
+            Circle().fill(NotchTokens.completeText).frame(width: 6, height: 6)
             Text("\(model.completedUnreadCount) 完成")
               .font(.system(size: 10, weight: .semibold))
-              .foregroundStyle(NotchTokens.greenComplete)
+              .foregroundStyle(.white.opacity(0.95))
 
 
           }
@@ -982,12 +987,11 @@ struct RootView: View {
                   // Status Pip
                   if row.busy {
                     Circle()
-                      .fill(NotchTokens.deepSeekBlue)
+                      .fill(NotchTokens.runningPip)
                       .frame(width: 6, height: 6)
-                      .shadow(color: NotchTokens.deepSeekBlue.opacity(0.8), radius: 2)
                   } else if row.isFailedResult {
                     Circle()
-                      .fill(NotchTokens.redFail)
+                      .fill(NotchTokens.failedText)
                       .frame(width: 6, height: 6)
                   } else if row.needsAction {
                     Circle()
@@ -995,7 +999,7 @@ struct RootView: View {
                       .frame(width: 6, height: 6)
                   } else if row.unread {
                     Circle()
-                      .fill(NotchTokens.greenComplete)
+                      .fill(NotchTokens.completeText)
                       .frame(width: 6, height: 6)
                   } else {
                     Circle().fill(Color.white.opacity(0.25)).frame(width: 5, height: 5)
@@ -1011,12 +1015,14 @@ struct RootView: View {
 
                   if row.busy {
                     Text("运行中")
-                      .font(.system(size: 9))
-                      .foregroundStyle(NotchTokens.deepSeekBlue)
+                      .font(.system(size: 11, weight: .medium))
+                      .foregroundStyle(NotchTokens.runningText)
+                      .fixedSize()
                   } else if row.unread && row.lastTurn?.failed != true {
                     Text("完成")
-                      .font(.system(size: 9, weight: .medium))
-                      .foregroundStyle(NotchTokens.greenComplete)
+                      .font(.system(size: 11, weight: .medium))
+                      .foregroundStyle(NotchTokens.completeText)
+                      .fixedSize()
                   }
                 }
                 .padding(.horizontal, 8)

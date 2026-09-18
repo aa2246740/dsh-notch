@@ -14,7 +14,8 @@
     "test:idle": "sh macos/Tests/idle.sh",
     "build:demo": "sh tools/recording/build.sh",
     "test:scrollbar": "sh macos/Tests/scrollbar.sh",
-    "test:expanded-height": "sh macos/Tests/expanded-height.sh"
+    "test:expanded-height": "sh macos/Tests/expanded-height.sh",
+    "test:host-lifetime": "sh macos/Tests/host-lifetime.sh"
   },
   "devDependencies": {
     "tsx": "4.22.4"

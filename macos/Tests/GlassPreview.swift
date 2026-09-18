@@ -55,7 +55,15 @@ private struct PreviewBackdrop: View {
         NotchOption(label: "文字清楚，继续试用", description: "观察标题、选项说明以及玻璃边缘。背景变化时，正文仍应保持清晰。"),
         NotchOption(label: "背景再深一点", description: "保留边缘的液态质感，提高阅读区域的稳定性。")
       ])
-      model.rows = [NotchRow(id: "preview", title: "Glass preview", child: false, busy: false, unread: false, ask: NotchAsk(id: "glass-ask", questions: [question]))]
+      if CommandLine.arguments.contains("--question") {
+        model.rows = [NotchRow(id: "preview", title: "Glass preview", child: false, busy: false, unread: false, ask: NotchAsk(id: "glass-ask", questions: [question]))]
+      } else {
+        model.rows = [
+          NotchRow(id: "running", title: "完善自动审批规则与设置", child: false, busy: true, unread: false),
+          NotchRow(id: "running2", title: "安装 Better Display 新分支", child: false, busy: true, unread: false),
+          NotchRow(id: "complete", title: "原生流式恢复验收", child: false, busy: false, unread: true),
+        ]
+      }
       let host = NotchHostingView(rootView: RootView(model: model, panelSize: CGSize(width: 470, height: 500), restSize: CGSize(width: 38, height: 44)))
       host.sizingOptions = []
       let panel = NotchPanel(size: NSSize(width: 470, height: 320))

@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var panel: NotchPanel?
   private var hosting: NotchHostingView<RootView>?
   private var cursorTimer: Timer?
+  private var hostLifetime: HostLifetimeMonitor?
   private var foldWork: DispatchWorkItem?
   private var enteredIsland = false
   private var cancellables = Set<AnyCancellable>()
@@ -64,6 +65,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     updateHits()
     panel.orderFrontRegardless()
     model.start()
+    let runtimeURL = ProcessInfo.processInfo.environment["DSH_NOTCH_RUNTIME_FILE"].map { URL(fileURLWithPath: $0) }
+      ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dsh/dsh-notch/runtime.json")
+    hostLifetime = HostLifetimeMonitor(runtimeURL: runtimeURL) {
+      NSApplication.shared.terminate(nil)
+    }
+    hostLifetime?.start()
     Publishers.CombineLatest3(model.$expanded, model.$currentIslandWidth, model.$currentIslandHeight)
       .receive(on: DispatchQueue.main)
       .sink { [weak self] _ in self?.updateHits() }
@@ -79,6 +86,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       name: NSApplication.didChangeScreenParametersNotification,
       object: nil
     )
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    hostLifetime?.stop()
+    cursorTimer?.invalidate()
   }
 
   @objc private func pinToScreen() {
