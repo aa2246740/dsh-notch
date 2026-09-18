@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+enum NotchMaterial {
+  static var usesLiquidGlass: Bool {
+    if #available(macOS 26.0, *) {
+      return ProcessInfo.processInfo.environment["DSH_NOTCH_MATERIAL"] != "hud"
+    }
+    return false
+  }
+}
+
 enum NotchGeometryAnimation {
   static let animation = Animation.spring(duration: 0.4, bounce: 0.08)
   static let duration: TimeInterval = 0.4
@@ -109,9 +118,13 @@ final class NotchPanel: NSPanel {
     isReleasedWhenClosed = false
   }
 
-  /// Put the SwiftUI host on top of a real window-backed HUD blur.
-  /// A VisualEffect inside NSHostingView is covered by the hosting view's opaque fill.
+  /// Keep the material outside SwiftUI's hosting layer so it can sample the
+  /// window backdrop. Its contentView contains sharp, undistorted controls.
   func embedHost(_ hosting: NSView) {
+    if #available(macOS 26.0, *), NotchMaterial.usesLiquidGlass {
+      contentView = NotchGlassSurface(hosting: hosting, frame: contentView?.bounds ?? NSRect(origin: .zero, size: frame.size))
+      return
+    }
     let effect = NSVisualEffectView(frame: contentView?.bounds ?? NSRect(origin: .zero, size: frame.size))
     effect.material = .hudWindow
     effect.blendingMode = .behindWindow
@@ -130,6 +143,48 @@ final class NotchPanel: NSPanel {
     hosting.layer?.isOpaque = false
     hosting.layer?.backgroundColor = NSColor.clear.cgColor
     effect.addSubview(hosting)
+  }
+}
+
+@available(macOS 26.0, *)
+final class NotchGlassSurface: NSView {
+  let glass = NSGlassEffectView()
+  private let content = NSView()
+  private let hosting: NSView
+  private let radius: CGFloat = 16
+
+  init(hosting: NSView, frame: NSRect) {
+    self.hosting = hosting
+    super.init(frame: frame)
+    wantsLayer = true
+    layer?.masksToBounds = true
+    layer?.cornerRadius = radius
+    layer?.cornerCurve = .continuous
+    layer?.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+    appearance = NSAppearance(named: .darkAqua)
+    glass.style = .regular
+    glass.cornerRadius = radius
+    glass.tintColor = NSColor.black.withAlphaComponent(0.18)
+    if #available(macOS 27.0, *) { glass.effectIsInteractive = true }
+    glass.contentView = content
+    addSubview(glass)
+    hosting.wantsLayer = true
+    hosting.layer?.isOpaque = false
+    hosting.layer?.backgroundColor = NSColor.clear.cgColor
+    content.addSubview(hosting)
+    layout()
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+  override var isOpaque: Bool { false }
+
+  override func layout() {
+    super.layout()
+    // Extend the native right-hand rounded end beyond the clipping boundary.
+    // The visible body stays flush with the display edge even while resizing.
+    glass.frame = NSRect(x: 0, y: 0, width: bounds.width + radius, height: bounds.height)
+    content.frame = glass.bounds
+    hosting.frame = bounds
   }
 }
 

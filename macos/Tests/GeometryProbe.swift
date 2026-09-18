@@ -29,7 +29,15 @@ import Combine
    }
    let gap=rep.pixelsWide-1-(blacks.last ?? -1)
    if abs(panel.frame.maxX - 432) > 0.01 { failures += 1 }
-   if gap>1 { failures += 1 }
+   if NotchMaterial.usesLiquidGlass {
+    // Native glass is translucent; black-pixel coverage isn't its boundary.
+    // Check the real material, content viewport and clipped right cap instead.
+    if #available(macOS 26.0, *), let surface=panel.contentView as? NotchGlassSurface {
+     if abs(host.frame.width-surface.bounds.width)>1 || abs(host.frame.height-surface.bounds.height)>1 { failures += 1; print("GLASS_CONTENT_BOUNDS_MISMATCH") }
+     if surface.glass.frame.maxX < surface.bounds.maxX+15 { failures += 1; print("GLASS_RIGHT_CAP_VISIBLE") }
+     if surface.glass.style != .regular { failures += 1; print("GLASS_STYLE_CHANGED") }
+    } else { failures += 1; print("NATIVE_GLASS_MISSING") }
+   } else if gap>1 { failures += 1 }
    if let corner=rep.colorAt(x:0,y:2), corner.alphaComponent > 0.1 { failures += 1; print("LEFT_CORNER_CLIPPED") }
    print("\(tag) width=\(rep.pixelsWide) black=\(blacks.first ?? -1)...\(blacks.last ?? -1) rightGap=\(gap)")
   }

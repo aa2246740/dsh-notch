@@ -12,11 +12,17 @@ enum NotchTokens {
   static let greenGlow = Color(red: 0.204, green: 0.780, blue: 0.349).opacity(0.5)
   static let deepSeekBlue = Color(red: 0.302, green: 0.420, blue: 0.996)   // #4D6BFE
   static let bodyBackground = Color.black
+  static let secondaryText = Color.white.opacity(0.72)
   /// Pinned to the expanded width and trailing-aligned.
-  /// Compact 38pt sits in the last ~12%, so it stays 90–100% black.
-  /// Expanded left is 50% black over HUD blur — enough contrast, still reads as glass.
+  /// The compact capsule sits in the darkest end. Native glass keeps a lighter
+  /// veil over the expanded reading area; the HUD fallback retains its old tint.
   static let glassFade = LinearGradient(
-    stops: [
+    stops: NotchMaterial.usesLiquidGlass ? [
+      .init(color: Color.black.opacity(0.20), location: 0),
+      .init(color: Color.black.opacity(0.26), location: 0.40),
+      .init(color: Color.black.opacity(0.44), location: 0.82),
+      .init(color: Color.black.opacity(0.88), location: 1),
+    ] : [
       .init(color: Color.black.opacity(0.50), location: 0),
       .init(color: Color.black.opacity(0.72), location: 0.40),
       .init(color: Color.black.opacity(0.90), location: 0.82),
@@ -599,7 +605,7 @@ struct RootView: View {
         }
       }
       .overlay {
-        if !reduceTransparency && model.showingExpanded {
+        if !reduceTransparency && model.showingExpanded && !NotchMaterial.usesLiquidGlass {
           shellShape.strokeBorder(NotchTokens.glassRim, lineWidth: 0.6)
         }
       }
@@ -611,7 +617,7 @@ struct RootView: View {
     ZStack(alignment: .topTrailing) {
       Color.clear
 
-      // One continuous shell: HUD glass fading to black at the trailing screen edge.
+      // One continuous shell, darkening toward the trailing screen edge.
       ZStack(alignment: .topTrailing) {
         shellBackground
 
@@ -846,7 +852,7 @@ struct RootView: View {
                 if let desc = option.description, !desc.isEmpty {
                   Text(desc)
                     .font(.system(size: 10))
-                    .foregroundStyle(on ? Color.black.opacity(0.7) : Color.white.opacity(0.55))
+                    .foregroundStyle(on ? Color.black.opacity(0.7) : NotchTokens.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                 }
               }
