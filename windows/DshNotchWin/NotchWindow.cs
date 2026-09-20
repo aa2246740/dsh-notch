@@ -2543,7 +2543,13 @@ internal sealed class NotchWindow : Form
             }
 
             int arcRow = Math.Max(0, radius / 2);
-            int arcX = (int)Math.Floor(NotchGeometry.CapsuleFreeEdge(arcRow, live.Width, live.Height, radius));
+            // CapsuleFreeEdge is described with the free side on the RIGHT; a
+            // right-attached capsule's free edge is on the left, so the sample
+            // column has to be mirrored before it is read back from the band.
+            double arcEdge = NotchGeometry.CapsuleFreeEdge(arcRow, live.Width, live.Height, radius);
+            int arcX = AttachedRight
+                ? (int)Math.Floor(live.Width - arcEdge)
+                : (int)Math.Floor(arcEdge);
             int arcAlpha = Alpha(arcX, arcRow);
             int runAlpha = Alpha(band?.AttachedRight == true ? 0 : live.Width - 1, live.Height / 2);
             int clearAlpha = Alpha(band?.AttachedRight == true ? 0 : live.Width - 1, 0);
@@ -3644,6 +3650,12 @@ internal sealed class NotchWindow : Form
             (double b025, _, double by025) = Ink(ink025, "blue");
             (double b095, double bx095, double by095) = Ink(ink095, "blue");
 
+            // A solid 19 pt disk paints pi*9.5^2*dpr^2 px; the ink thresholds
+            // below are fractions of that area, so they hold at any render DPI
+            // (the raw numbers were calibrated where dpr was about 1.5).
+            double diskArea = Math.PI * 90.25
+                * Math.Pow(ink095.GetProperty("dpr").GetDouble(), 2);
+
             // "Success flies up" cannot be asserted as "the ink's y decreases":
             // the DESTINATION is the fixed top slot while the working lamp slides
             // down into the second slot, so part of the ink moves down with it. The
@@ -3656,7 +3668,7 @@ internal sealed class NotchWindow : Form
                 Math.Max(corridor025, corridorHalf) > 8 && corridorEnd == 0,
                 $"ink in y 33..39: {corridor025:0} (0.25) {corridorHalf:0} (0.5) {corridorEnd:0} (0.95)");
             check("the outcome is drawn, not faded in",
-                g025 > 0 && g025 < 300 && g095 > 500,
+                g025 > 0 && g025 < 300 && g095 > 0.78 * diskArea,
                 $"green ink {g025:0} at 0.25s (a partial arc) -> {g050:0} -> {g095:0} px at 0.95s (a solid disk)");
             check("the success count lands in the top slot",
                 Field(ink095, "green", "minY") < 17 && Field(ink095, "green", "maxY") < 34
@@ -3706,7 +3718,7 @@ internal sealed class NotchWindow : Form
                 Math.Max(failCorridorEarly, failCorridor) > 8 && failCorridorEnd == 0,
                 $"ink in y 33..39: {failCorridorEarly:0} (0.25) {failCorridor:0} (0.5) {failCorridorEnd:0} (0.95)");
             check("the failure ink lands in the second slot",
-                r095 > 500 && Field(f095, "red", "maxY") > 55 && ry095 > fby095
+                r095 > 0.78 * diskArea && Field(f095, "red", "maxY") > 55 && ry095 > fby095
                     && Math.Abs(fby095 - 22) < 4,
                 $"red n={r095:0} cy={ry095:0.#} box y ..{Field(f095, "red", "maxY"):0.#} "
                     + $"(slot 40.5..59.5), working lamp still at {fby095:0.#}");
@@ -3717,7 +3729,7 @@ internal sealed class NotchWindow : Form
             // The count is expected to be a PARTIAL result circle here, not the
             // settled disk: 0.25 s into the flight the drawn arc is still short.
             check("the failure outcome is drawn, not faded in",
-                r025 > 0 && r025 < 0.8 * r095 && r095 > 500,
+                r025 > 0 && r025 < 0.8 * r095 && r095 > 0.78 * diskArea,
                 $"red ink {r025:0} at 0.25s (a partial arc) -> {r050:0} -> {r095:0} px "
                     + $"at 0.95s (a solid disk); now[{canvas025.GetString()}]");
             check("failure ink is red, not green",
@@ -3769,9 +3781,9 @@ internal sealed class NotchWindow : Form
             double soloDark = await Dark(12, 16, 18, 28);
             double soloPlain = await Dark(6, 23, 10, 27);
             check("the solo decision lamp is a solid amber disk",
-                soloAmber > 400 && soloState.GetProperty("height").GetDouble() == 20
+                soloAmber > 0.62 * diskArea && soloState.GetProperty("height").GetDouble() == 20
                     && Math.Abs(soloAmberY - 22) < 2,
-                $"amber={soloAmber:0} at y={soloAmberY:0.#} (expect ~600 at 22)");
+                $"amber={soloAmber:0} at y={soloAmberY:0.#} (expect ~{0.62 * diskArea:0} at 22)");
             check("its exclamation point is drawn on the disk",
                 soloDark >= 5 && soloPlain == 0,
                 $"{soloDark:0} dark px where the glyph is, {soloPlain:0} inside the same disk away from it");
@@ -4282,6 +4294,22 @@ internal sealed class NotchWindow : Form
             await Task.Delay(120);
             JsonElement landed = await Robot();
             double entryAt = Num(landed, "entryAt");
+            if (entryAt <= 0)
+            {
+                // On a loaded box the marshalled snapshot can land after the
+                // first sample, and while the clock is pinned the outgoing
+                // lamp cannot finish draining — either way the arrival edge
+                // has not run yet. Unpin briefly so it can, then pin back at
+                // the real edge to walk the transition deterministically.
+                await core.ExecuteScriptAsync("__notchOrbit.probe.live()");
+                var arrivalWait = Stopwatch.StartNew();
+                while (entryAt <= 0 && arrivalWait.ElapsedMilliseconds < 2500)
+                {
+                    await Task.Delay(100);
+                    landed = await Robot();
+                    entryAt = Num(landed, "entryAt");
+                }
+            }
             await Pin(entryAt + 0.10);
             JsonElement midway = await Robot();
             await Pin(entryAt + 0.30);
