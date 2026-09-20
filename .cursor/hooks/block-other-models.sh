@@ -3,17 +3,51 @@
 # computerUse/browser subagents. Fail closed if the payload cannot be read.
 set -eu
 
-input=$(cat || true)
+# Cursor on Windows may launch hooks without Git's usr/bin on PATH.
+if ! command -v sed >/dev/null 2>&1 || ! command -v tr >/dev/null 2>&1; then
+  if [ -n "${LOCALAPPDATA:-}" ] && [ -d "${LOCALAPPDATA}/AI-Air-Helper/MinGit/usr/bin" ]; then
+    PATH="${LOCALAPPDATA}/AI-Air-Helper/MinGit/usr/bin:/usr/bin:/bin:${PATH:-}"
+  else
+    PATH="/usr/bin:/bin:${PATH:-}"
+  fi
+  export PATH
+fi
+
+# Slurp stdin without cat so a missing coreutils still fail-closed on empty.
+input=""
+while IFS= read -r line || [ -n "${line:-}" ]; do
+  if [ -n "$input" ]; then
+    input="${input}
+${line}"
+  else
+    input="$line"
+  fi
+done
+
 if [ -z "${input}" ]; then
   printf '%s\n' '{"permission":"deny","user_message":"Blocked: empty subagentStart payload (fail closed)."}'
   exit 0
 fi
 
-lower=$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]')
+to_lower() {
+  if command -v tr >/dev/null 2>&1; then
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+  elif command -v sed >/dev/null 2>&1; then
+    printf '%s' "$1" | sed 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/'
+  else
+    printf '%s' "$1"
+  fi
+}
+
+lower=$(to_lower "$input")
 
 json_get() {
   key=$1
-  printf '%s' "$lower" | tr '\n' ' ' | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n 1
+  if command -v sed >/dev/null 2>&1; then
+    printf '%s' "$lower" | tr '\n' ' ' | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | sed -n '1p'
+  else
+    printf ''
+  fi
 }
 
 model=$(json_get model)
@@ -55,10 +89,11 @@ case "$model" in
     ;;
 esac
 
-# Catch model names that appear anywhere in the payload even if the key differs.
-if printf '%s' "$lower" | grep -Eq '"model"[[:space:]]*:[[:space:]]*"[^"]*(claude|sonnet|opus|gpt-|chatgpt|gemini)'; then
-  deny "Blocked: non-Grok model requested. Only Grok 4.6 or an omitted/inherit model is allowed."
-fi
+case "$lower" in
+  *'"model":'*claude*|*'"model":'*sonnet*|*'"model":'*opus*|*'"model":'*gpt-*|*'"model":'*chatgpt*|*'"model":'*gemini*)
+    deny "Blocked: non-Grok model requested. Only Grok 4.6 or an omitted/inherit model is allowed."
+    ;;
+esac
 
 printf '%s\n' '{"permission":"allow"}'
 exit 0
