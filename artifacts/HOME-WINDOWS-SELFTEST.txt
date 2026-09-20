@@ -1,5 +1,5 @@
 Home-Windows PR #4 line + long-detail fixture fix
-command: Start-Process ...\dsh-notch-win.exe -ArgumentList '--selftest' -Wait -PassThru
+command: Start-Process -FilePath <dsh-notch-win.exe> -ArgumentList '--selftest' -Wait -PassThru
 exit: 0
 PASS: 157
 FAIL: 0
