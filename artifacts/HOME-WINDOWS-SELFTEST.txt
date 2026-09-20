@@ -1,0 +1,9 @@
+Home-Windows PR #4 line + long-detail fixture fix
+command: Start-Process ...\dsh-notch-win.exe -ArgumentList '--selftest' -Wait -PassThru
+exit: 0
+PASS: 157
+FAIL: 0
+RESULT: PASS
+bounded scroll: scroll(content/viewport)=1363 fits=True
+npm test: 16/16 exit 0
+orbit-math / serve-check / sidebar-seen: exit 0
