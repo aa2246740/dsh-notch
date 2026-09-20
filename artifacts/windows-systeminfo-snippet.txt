@@ -1,0 +1,6 @@
+
+OS Name:                       Microsoft Windows 11 专业版
+OS Version:                    10.0.26200 N/A Build 26200
+System Type:                   x64-based PC
+BIOS Version:                  American Megatrends Inc. 3207, 2025/2/8
+Total Physical Memory:         31,913 MB
