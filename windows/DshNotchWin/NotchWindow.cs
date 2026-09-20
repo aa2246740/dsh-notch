@@ -648,6 +648,7 @@ internal sealed class NotchWindow : Form
         if (_selfTest || ReduceMotion)
         {
             ApplySizeNow(target.Width, height, work);
+            PushGeometry(target.Width, height);
             return;
         }
 
