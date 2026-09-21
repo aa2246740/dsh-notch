@@ -23,3 +23,5 @@ open "dist/DSH Notch Elastic Preview.app"
 验证命令：`npm run test:edge-dock`。检查连续拖动、释放无跳变、回弹中反向抓取、恢复途中任务尺寸变化、准确端点、命中区域和减少动态效果。设置 `NOTCH_EDGE_OUTPUT` 可指定原生静态帧输出目录。
 
 这是候选功能。构建预览不会替换已安装的 `DSH.app`，也不会激活 Host 插件。
+
+算法基准：`sh macos/Tests/edge-algorithm-bench.sh`；可加 Git 提交号比较旧版。只编译当前/指定提交的纯弹簧与轮廓代码，不连接 DSH、不操作正式窗口。完整结果见 [算法验证](../../docs/elastic-edge-dock.md#解析弹簧与轮廓复用--2026-09-21)。

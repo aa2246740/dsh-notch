@@ -14,6 +14,66 @@ import SwiftUI
     func point(_ pose: EdgeDockPose, _ f: CGPoint) -> CGPoint {
       CGPoint(x: pose.body.minX + pose.width*f.x, y: pose.body.minY + pose.height*f.y)
     }
+    // Closed-form physics must describe the same trajectory at every cadence,
+    // including missed callbacks, rather than slowing down when dt is clamped.
+    for damping in [0.6,0.9,1.0,1.4] {
+      var single=EdgeSpring(value:140,velocity:777)
+      single.step(to:-30,dt:0.73,damping:damping)
+      for count in [22,44,88,175] {
+        var split=EdgeSpring(value:140,velocity:777)
+        for _ in 0..<count { split.step(to:-30,dt:0.73/Double(count),damping:damping) }
+        check(abs(single.value-split.value)<1e-9 && abs(single.velocity-split.velocity)<1e-8,
+          "spring is cadence independent at damping \(damping) and \(count) callbacks")
+      }
+      var paused=EdgeSpring(value:140,velocity:777)
+      paused.step(to:-30,dt:3600,damping:damping)
+      check(paused.value == -30 && paused.velocity == 0, "long pauses converge without overflow")
+      var tiny=EdgeSpring(value:140,velocity:777)
+      tiny.step(to:-30,dt:1e-7,damping:damping)
+      check(abs((tiny.value-140)/1e-7-777)<0.01, "analytic initial velocity is the throw velocity")
+    }
+    let sparse=make(), regular=make()
+    for d in [sparse,regular] { d.begin(size:d.restSize,at:0); d.drag(inward:140,down:88,at:0.18); d.end() }
+    sparse.advance(by:0.36)
+    for _ in 0..<36 { regular.advance(by:0.01) }
+    check(abs(sparse.pose.inward-regular.pose.inward)<1e-9 && abs(sparse.pose.down-regular.pose.down)<1e-9,
+      "model catches up to real time after a delayed callback")
+    let before=sparse.pose, tinyDT=1e-6
+    regular.advance(by:tinyDT)
+    let vx=(regular.pose.inward-before.inward)/tinyDT, vy=(regular.pose.down-before.down)/tinyDT
+    sparse.setHidden(false); sparse.advance(by:tinyDT)
+    check(abs((sparse.pose.inward-before.inward)/tinyDT-vx)<0.02 && abs((sparse.pose.down-before.down)/tinyDT-vy)<0.02,
+      "target reversal inherits both analytic velocity components")
+    sparse.advance(by:5); regular.advance(by:5)
+    check(!sparse.settling && !regular.settling, "a long callback delay does not prolong flight")
+    let cache=EdgeDockContourCache()
+    for frame in 0..<160 {
+      let pose=EdgeDockPose(width:frame<80 ? 38:420,height:frame<80 ? 44:260,
+        inward:150-Double(frame)*1.2,down:90*sin(Double(frame)/20))
+      let cached=EdgeDockGeometry(pose:pose,cache:cache), plain=EdgeDockGeometry(pose:pose)
+      check(cached.path.cgPath == plain.path.cgPath, "cached contour is exactly equivalent to the uncached algorithm")
+    }
+    check(cache.count <= 32 && cache.misses < 50, "contour reuse is bounded across original and expanded shells")
+    for height in 45...244 {
+      _ = EdgeDockGeometry(pose:EdgeDockPose(height:CGFloat(height),inward:70,down:20),cache:cache)
+    }
+    check(cache.count == 32 && cache.misses > 200, "continuous task-size changes evict old contours instead of growing the cache")
+    let sampled=make()
+    sampled.begin(size:sampled.restSize,at:0); sampled.drag(inward:140,down:88,at:0.18); sampled.end()
+    let dense=sampled.flightSamples(), compact=sampled.flightTimeline()
+    check(compact.count < dense.count && compact.first?.pose == dense.first && compact.last?.pose == dense.last,
+      "compact trajectory reduces payload and retains exact start/end")
+    var held=0, maxError=0.0
+    for (i,p) in dense.enumerated() {
+      let t=Double(i)/120
+      while held+1 < compact.count && compact[held+1].time <= t+1e-12 { held += 1 }
+      let q=compact[held].pose
+      maxError=max(maxError,hypot(p.inward-q.inward,p.down-q.down))
+      check(hypot(p.inward-q.inward,p.down-q.down) <= 0.025+1e-9 && abs(p.conceal-q.conceal) <= 1.0/1024+1e-9,
+        "every held sample remains inside the translation/opacity error budget")
+    }
+    print("ALGORITHM dense=\(dense.count) compact=\(compact.count) maxHeldTranslationErrorPt=\(maxError)")
+    sampled.stop()
     for (dx,dy) in [(120.0,0.0),(0,100),(0,-100),(100,80),(100,-80),(-12,0),(-12,80),(-12,-80)] {
       let d = make(), f = CGPoint(x:0.3,y:0.7), before = point(make().pose, CGPoint(x:0.3,y:0.7))
       d.begin(size:d.restSize,at:0)

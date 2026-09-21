@@ -106,15 +106,16 @@ final class NotchPanel: NSPanel {
       if hosting.layer?.mask !== motionBodyMask { hosting.layer?.mask = motionBodyMask }
     } else { hosting.layer?.mask = nil; motionBodyShape = nil }
   }
-  func startElasticFlight(frames: [NotchElasticFrame], interval: Double, began: Double) {
-    guard let content = motionHosting?.layer, frames.count > 1 else { return }
-    let duration = Double(frames.count-1)*interval
-    let times = frames.indices.map { NSNumber(value:Double($0)/Double(frames.count-1)) }
+  func startElasticFlight(frames: [NotchElasticFrame], times sampleTimes: [Double], began: Double) {
+    guard let content = motionHosting?.layer, frames.count > 1, frames.count == sampleTimes.count,
+          let duration=sampleTimes.last, duration > 0 else { return }
+    let times = sampleTimes.map { NSNumber(value:$0/duration) }
     func animate(_ layer: CALayer, _ key: String, _ values: [Any]) {
       let animation = CAKeyframeAnimation(keyPath:key)
       animation.values = values; animation.keyTimes = times
       // The contour's vertex topology changes as it stretches. Discrete 120 Hz
       // samples keep outline, content and clipping on the exact same pose.
+      // Near-identical tail samples share one held pose within a subpixel budget.
       animation.calculationMode = .discrete
       animation.duration = duration; animation.beginTime = layer.convertTime(began,from:nil)
       animation.fillMode = .forwards; animation.isRemovedOnCompletion = false

@@ -60,18 +60,116 @@ struct EdgeDockPose: Equatable {
   }
 }
 
+/// Exact state transition of x'' + 2*zeta*omega*x' + omega^2*x = 0.
+/// No integration substeps, frame-rate dependence or dt clamp.
+struct EdgeSpringTransition {
+  let xx: CGFloat, xv: CGFloat, vx: CGFloat, vv: CGFloat
+  init(dt: Double, frequency: CGFloat = 15, damping: CGFloat = 0.60) {
+    guard dt > 0, dt.isFinite else { xx=1; xv=0; vx=0; vv=1; return }
+    let w=Double(frequency), a=Double(damping)*w, t=dt
+    let discriminant=w*w-a*a
+    let c: Double, s: Double
+    if abs(discriminant) < 1e-8 {
+      let decay=exp(-a*t); c=decay; s=decay*t
+    } else if discriminant > 0 {
+      let b=sqrt(discriminant), decay=exp(-a*t)
+      c=decay*cos(b*t); s=decay*sin(b*t)/b
+    } else {
+      let b=sqrt(-discriminant)
+      // Stable even for a long pause: never multiply exp(-a*t) by cosh(b*t).
+      let slow=exp((-a+b)*t), fast=exp((-a-b)*t)
+      c=(slow+fast)/2; s=(slow-fast)/(2*b)
+    }
+    xx=CGFloat(c+a*s); xv=CGFloat(s); vx=CGFloat(-w*w*s); vv=CGFloat(c-a*s)
+  }
+}
+
 struct EdgeSpring {
   var value: CGFloat
   var velocity: CGFloat = 0
+  mutating func step(to target: CGFloat, using m: EdgeSpringTransition) {
+    let x=value-target, v=velocity
+    value=target+m.xx*x+m.xv*v; velocity=m.vx*x+m.vv*v
+  }
   mutating func step(to target: CGFloat, dt: Double, frequency: CGFloat = 15, damping: CGFloat = 0.60) {
-    let steps = max(1, Int(ceil(dt / (1.0 / 240))))
-    let h = CGFloat(dt / Double(steps))
-    for _ in 0..<steps {
-      velocity += (-frequency * frequency * (value - target) - 2 * damping * frequency * velocity) * h
-      value += velocity * h
-    }
+    step(to:target,using:EdgeSpringTransition(dt:dt,frequency:frequency,damping:damping))
   }
   func settled(at target: CGFloat) -> Bool { abs(value - target) < 0.025 && abs(velocity) < 0.15 }
+}
+
+struct EdgeDockSample {
+  let time: Double
+  let pose: EdgeDockPose
+}
+
+struct EdgeDockFlight {
+  let initial: [EdgeSpring]
+  let target: EdgeDockPose
+  let hidden: Bool
+  var values: [CGFloat] { [target.inward,target.down,target.width,target.height,target.conceal] }
+  func transitions(dt: Double) -> [EdgeSpringTransition] {
+    let x=EdgeSpringTransition(dt:dt,damping:hidden ? 0.90:0.60)
+    let y=EdgeSpringTransition(dt:dt), size=EdgeSpringTransition(dt:dt,damping:1)
+    return [x,y,size,size,size]
+  }
+  func state(at time: Double) -> [EdgeSpring] {
+    var state=initial
+    let matrix=transitions(dt:time), targets=values
+    for i in state.indices { state[i].step(to:targets[i],using:matrix[i]) }
+    return state
+  }
+  static func pose(_ s: [EdgeSpring]) -> EdgeDockPose {
+    EdgeDockPose(width:max(1,s[2].value),height:max(1,s[3].value),inward:s[0].value,
+      down:s[1].value,conceal:min(1,max(0,s[4].value)))
+  }
+  func samples(interval: Double = 1.0/120) -> [EdgeDockSample] {
+    var state=initial, frames=[EdgeDockSample(time:0,pose:Self.pose(initial))]
+    // One coefficient calculation per damping group, then just multiply/add.
+    let matrices=transitions(dt:interval), targets=values
+    for frame in 1...max(1,Int(ceil(3/interval))) {
+      for i in state.indices { state[i].step(to:targets[i],using:matrices[i]) }
+      let time=Double(frame)*interval
+      if state.indices.allSatisfy({state[$0].settled(at:targets[$0])}) {
+        frames.append(EdgeDockSample(time:time,pose:target)); break
+      }
+      frames.append(EdgeDockSample(time:time,pose:Self.pose(state)))
+    }
+    return frames
+  }
+  /// A held frame may differ by at most 0.025 pt of translation/size and
+  /// 1/1024 concealment. All layers retain the same time table and exact end.
+  static func compact(_ dense: [EdgeDockSample]) -> [EdgeDockSample] {
+    guard let first=dense.first else { return [] }
+    var result=[first]
+    for (index,sample) in dense.dropFirst().enumerated() {
+      let p=result.last!.pose, q=sample.pose
+      if index == dense.count-2 || hypot(p.inward-q.inward,p.down-q.down) > 0.025 ||
+         max(abs(p.width-q.width),abs(p.height-q.height)) > 0.025 || abs(p.conceal-q.conceal) > 1.0/1024 {
+        result.append(sample)
+      }
+    }
+    return result
+  }
+}
+
+/// Owned by one controller/flight, never global; exact keys, bounded storage.
+final class EdgeDockContourCache {
+  struct Key: Hashable { let width: CGFloat, height: CGFloat, radius: CGFloat, trailing: CGFloat }
+  struct Contour { let path: Path, sorted: [CGPoint], bodyClip: CGPath }
+  private var entries: [Key:Contour] = [:]
+  private var order: [Key] = []
+  private(set) var misses = 0
+  var count: Int { entries.count }
+  func contour(size: CGSize, radius: CGFloat, trailing: CGFloat) -> Contour {
+    let key=Key(width:size.width,height:size.height,radius:radius,trailing:trailing)
+    if let existing=entries[key] { return existing }
+    let path=EdgeDockGeometry.shell(in:CGRect(origin:.zero,size:size),radius:radius,trailing:trailing)
+    var flip=CGAffineTransform(a:1,b:0,c:0,d:-1,tx:0,ty:size.height)
+    let value=Contour(path:path,sorted:EdgeDockGeometry.sortedContour(path),bodyClip:path.cgPath.copy(using:&flip)!)
+    if order.count == 32 { entries.removeValue(forKey:order.removeFirst()) }
+    entries[key]=value; order.append(key); misses += 1
+    return value
+  }
 }
 
 @MainActor
@@ -113,6 +211,10 @@ final class EdgeDockModel: NSObject, ObservableObject {
   private var target = EdgeDockPose()
   private var displayLink: CADisplayLink?
   private var clockTime = 0.0
+  private var elapsed = 0.0
+  private var flight: EdgeDockFlight?
+  private var timeline: [EdgeDockSample] = []
+  var flightDuration: Double { timeline.last?.time ?? 0 }
   var blocksContent: Bool { hidden || dragging || settling }
   var contentOpacity: Double {
     let t = min(1, max(0, (pose.conceal - 0.25) / 0.60))
@@ -130,9 +232,8 @@ final class EdgeDockModel: NSObject, ObservableObject {
   private var shownPose: EdgeDockPose { EdgeDockPose(width: restSize.width, height: restSize.height) }
 
   func begin(size: CGSize, at time: Double) {
-    let visible = settling ? presentedPose?() : nil
+    synchronizePresentation()
     stop()
-    if let visible { pose = visible }
     if !engaged { pose = EdgeDockPose(width: size.width, height: size.height); contentSize = size }
     beganHidden = hidden
     grabbed = pose; lastMotionTime = time; displacement = .zero; releaseVelocity = .zero
@@ -191,6 +292,7 @@ final class EdgeDockModel: NSObject, ObservableObject {
     animate(to: tuckedPose)
   }
   private func animate(to next: EdgeDockPose, velocity: CGSize? = nil, animated: Bool = true) {
+    synchronizePresentation()
     let old = springs
     stop(); target = next
     let values = [pose.inward, pose.down, pose.width, pose.height, pose.conceal]
@@ -200,37 +302,48 @@ final class EdgeDockModel: NSObject, ObservableObject {
       return EdgeSpring(value: value, velocity: speed ?? inherited)
     }
     if !animated || reduceMotion { finish(); return }
+    flight = EdgeDockFlight(initial:springs,target:target,hidden:hidden)
+    timeline = flight!.samples()
+    elapsed = 0
+    clockTime = CACurrentMediaTime()
     settling = true
     flightRevision += 1
     diagnostics?.begin(clock:"display-link")
     onFrame?()
     guard automaticTicks else { return }
-    clockTime = CACurrentMediaTime()
     let link = makeDisplayLink?(self,#selector(displayFrame(_:))) ?? NSScreen.main?.displayLink(target:self,selector:#selector(displayFrame(_:)))
     displayLink = link
     link?.add(to:.main,forMode:.common)
   }
+  /// The compositor stamps this after preparation, so layout/model and layers
+  /// share one origin instead of drifting when the main thread misses a tick.
+  func startPresentation(at time: Double) { clockTime=time; elapsed=0 }
+  private func synchronizePresentation() {
+    guard settling, let flight else { return }
+    if automaticTicks { elapsed=max(0,CACurrentMediaTime()-clockTime) }
+    springs=flight.state(at:elapsed)
+    pose=presentedPose?() ?? EdgeDockFlight.pose(springs)
+    let visible=[pose.inward,pose.down,pose.width,pose.height,pose.conceal]
+    // CA can be holding a compacted sample. Use its visible position while
+    // retaining the analytic velocity at this instant when changing targets.
+    for i in springs.indices { springs[i].value=visible[i] }
+  }
   @objc private func displayFrame(_ link: CADisplayLink) {
     guard settling else { return }
     diagnostics?.tick()
-    let next = link.targetTimestamp
-    advance(by:min(0.05,max(0,next-clockTime)))
-    clockTime = next
+    advance(to:max(0,CACurrentMediaTime()-clockTime))
   }
   func advance(by dt: Double) {
-    guard settling, dt > 0 else { return }
-    let values = [target.inward, target.down, target.width, target.height, target.conceal]
-    for index in springs.indices {
-      // Damping into the screen keeps the exposed slice visible; vertical
-      // rebound and restoration preserve the rubber's elasticity.
-      let damping: CGFloat = index == 0 ? (hidden ? 0.90 : 0.60) : index == 1 ? 0.60 : 1
-      springs[index].step(to: values[index], dt: min(dt, 0.05), damping: damping)
-    }
-    pose = EdgeDockPose(width: max(1, springs[2].value), height: max(1, springs[3].value),
-                        inward: springs[0].value, down: springs[1].value,
-                        conceal: min(1, max(0, springs[4].value)))
-    if springs.indices.allSatisfy({ springs[$0].settled(at: values[$0]) }) { finish() }
-    else { onFrame?() }
+    guard dt > 0, dt.isFinite else { return }
+    advance(to:elapsed+dt)
+  }
+  private func advance(to time: Double) {
+    guard settling, let flight else { return }
+    elapsed=time
+    if elapsed >= flightDuration { finish(); return }
+    springs=flight.state(at:elapsed)
+    pose=EdgeDockFlight.pose(springs)
+    onFrame?()
   }
   private func finish() {
     stop(); pose = target
@@ -244,23 +357,10 @@ final class EdgeDockModel: NSObject, ObservableObject {
   }
   func stop() { displayLink?.invalidate(); displayLink = nil; settling = false }
 
-  /// Sample the same spring solver for a compositor-owned flight. No second
-  /// easing curve: the layer keyframes retain both components of release speed.
   func flightSamples(interval: Double = 1.0/120) -> [EdgeDockPose] {
-    guard springs.count == 5 else { return [pose] }
-    var state = springs, frames = [pose]
-    let values = [target.inward,target.down,target.width,target.height,target.conceal]
-    for _ in 0..<360 {
-      for i in state.indices {
-        let damping: CGFloat = i == 0 ? (hidden ? 0.90 : 0.60) : i == 1 ? 0.60 : 1
-        state[i].step(to:values[i],dt:interval,damping:damping)
-      }
-      if state.indices.allSatisfy({state[$0].settled(at:values[$0])}) { frames.append(target); break }
-      frames.append(EdgeDockPose(width:max(1,state[2].value),height:max(1,state[3].value),
-        inward:state[0].value,down:state[1].value,conceal:min(1,max(0,state[4].value))))
-    }
-    return frames
+    flight?.samples(interval:interval).map(\.pose) ?? [pose]
   }
+  func flightTimeline() -> [EdgeDockSample] { EdgeDockFlight.compact(timeline) }
 }
 
 struct EdgeDockGeometry {
@@ -269,7 +369,7 @@ struct EdgeDockGeometry {
   let path: Path
   let radius: CGFloat
 
-  init(pose: EdgeDockPose) {
+  init(pose: EdgeDockPose, cache: EdgeDockContourCache? = nil) {
     body = pose.body
     radius = min(16, pose.width / 2, pose.height / 2)
     // A single surface under tension, not a rigid head with a separate cable.
@@ -277,10 +377,12 @@ struct EdgeDockGeometry {
     // exact crop of the original cap instead of manufacturing a new nub.
     let anchorX = max(0, body.maxX)
     let freedCorner = radius * min(1, max(0, pose.inward) / 16)
-    let original = Self.shell(in: body, radius: radius, trailing: freedCorner)
-    let outline = abs(pose.down) < 0.0001 && pose.inward <= 0 ? original : Self.stretchedHull(
-      original, anchors: [CGPoint(x: anchorX, y: 0), CGPoint(x: anchorX, y: pose.height)]
-    )
+    let contour=cache?.contour(size:pose.size,radius:radius,trailing:freedCorner)
+    let original=contour?.path ?? Self.shell(in:CGRect(origin:.zero,size:pose.size),radius:radius,trailing:freedCorner)
+    let translation=CGAffineTransform(translationX:body.minX,y:body.minY)
+    let outline = abs(pose.down) < 0.0001 && pose.inward <= 0 ? original.applying(translation) : Self.stretchedHull(
+      contour?.sorted ?? Self.sortedContour(original), offset:body.origin,
+      anchors:[CGPoint(x:anchorX,y:0),CGPoint(x:anchorX,y:pose.height)])
     path = outline
     let raw = outline.boundingRect
     bounds = CGRect(x: min(-1, raw.minX), y: raw.minY,
@@ -295,11 +397,11 @@ struct EdgeDockGeometry {
                           bottomTrailingRadius:trailing,topTrailingRadius:trailing,style:.continuous).path(in:rect)
   }
 
-  private static func stretchedHull(_ original: Path, anchors: [CGPoint]) -> Path {
+  static func sortedContour(_ original: Path) -> [CGPoint] {
     // Sample the very same continuous corners used by RootView. Convex tension
     // keeps that cap, joins its tangents to the full edge and cannot form an
     // S-shaped cable or an overlapping second body. Curve error is subpixel.
-    var points = anchors, current = CGPoint.zero
+    var points = [CGPoint](), current = CGPoint.zero
     func midpoint(_ a: CGPoint, _ b: CGPoint) -> CGPoint { CGPoint(x:(a.x+b.x)/2,y:(a.y+b.y)/2) }
     func cubic(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint, _ d: CGPoint, depth: Int = 0) {
       let dx = d.x-a.x, dy = d.y-a.y, length2 = dx*dx+dy*dy
@@ -331,7 +433,15 @@ struct EdgeDockGeometry {
       case .closeSubpath: break
       }
     }
-    let sorted = points.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+    return points.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+  }
+  private static func stretchedHull(_ local: [CGPoint], offset: CGPoint, anchors: [CGPoint]) -> Path {
+    var sorted=local.map { CGPoint(x:$0.x+offset.x,y:$0.y+offset.y) }
+    // Translation preserves sort order; insert only the two moving anchors.
+    for anchor in anchors {
+      let index=sorted.firstIndex { $0.x > anchor.x || ($0.x == anchor.x && $0.y >= anchor.y) } ?? sorted.count
+      sorted.insert(anchor,at:index)
+    }
     func cross(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> CGFloat {
       (b.x-a.x)*(c.y-a.y) - (b.y-a.y)*(c.x-a.x)
     }
@@ -352,8 +462,8 @@ struct EdgeDockGeometry {
 }
 
 extension NotchElasticFrame {
-  init(pose: EdgeDockPose, viewport: CGRect) {
-    let g = EdgeDockGeometry(pose:pose)
+  init(pose: EdgeDockPose, viewport: CGRect, cache: EdgeDockContourCache? = nil) {
+    let g = EdgeDockGeometry(pose:pose,cache:cache)
     var flip = CGAffineTransform(a:1,b:0,c:0,d:-1,tx:0,ty:viewport.height)
     outline = g.path(in:viewport).cgPath.copy(using:&flip)!
     translation = CGPoint(x:g.body.minX-viewport.minX,y:viewport.maxY-g.body.maxY)
@@ -361,7 +471,8 @@ extension NotchElasticFrame {
     opacity = Double(1-t*t*(3-2*t))
     let body = CGRect(origin:.zero,size:pose.size)
     var bodyFlip = CGAffineTransform(a:1,b:0,c:0,d:-1,tx:0,ty:body.height)
-    bodyClip = EdgeDockGeometry.shell(in:body,radius:g.radius,trailing:g.radius*min(1,max(0,pose.inward)/16)).cgPath.copy(using:&bodyFlip)!
+    let trailing=g.radius*min(1,max(0,pose.inward)/16)
+    bodyClip = cache?.contour(size:pose.size,radius:g.radius,trailing:trailing).bodyClip ?? EdgeDockGeometry.shell(in:body,radius:g.radius,trailing:trailing).cgPath.copy(using:&bodyFlip)!
   }
 }
 
@@ -429,9 +540,9 @@ final class EdgeDockController: NSObject {
   private var canvas: CGRect?
   private var wasSettling = false
   private var flightRevision = -1
-  private var compositorPoses: [EdgeDockPose] = []
+  private var compositorTimeline: [EdgeDockSample] = []
+  private let contourCache = EdgeDockContourCache()
   private var compositorBegan = 0.0
-  private let sampleInterval = 1.0/120
   var onBegin: (() -> Void)?
 
   init(dock: EdgeDockModel, panel: NotchPanel, hosting: NSView) {
@@ -484,13 +595,18 @@ final class EdgeDockController: NSObject {
   func contains(_ point: NSPoint) -> Bool {
     guard let panel else { return false }
     guard dock.engaged else { return panel.frame.contains(point) }
-    let geometry = compositedPose().map(EdgeDockGeometry.init(pose:)) ?? dock.geometry
+    let geometry = EdgeDockGeometry(pose:compositedPose() ?? dock.pose,cache:contourCache)
     return point.x <= origin.x && geometry.path.contains(CGPoint(x:point.x-origin.x,y:origin.y-point.y))
   }
   private func compositedPose() -> EdgeDockPose? {
-    guard !compositorPoses.isEmpty else { return nil }
-    let index = min(compositorPoses.count-1,max(0,Int((CACurrentMediaTime()-compositorBegan)/sampleInterval)))
-    return compositorPoses[index]
+    guard !compositorTimeline.isEmpty else { return nil }
+    let t=max(0,CACurrentMediaTime()-compositorBegan)
+    var low=0, high=compositorTimeline.count
+    while low+1 < high {
+      let mid=(low+high)/2
+      if compositorTimeline[mid].time <= t { low=mid } else { high=mid }
+    }
+    return compositorTimeline[low].pose
   }
   func updateRest(_ size: CGSize) {
     dock.updateRest(size)
@@ -498,12 +614,12 @@ final class EdgeDockController: NSObject {
   }
   private func render() {
     guard let panel else { return }
-    if dock.settling && flightRevision == dock.flightRevision && !compositorPoses.isEmpty { return }
-    if !compositorPoses.isEmpty { panel.stopElasticFlight(); compositorPoses = [] }
+    if dock.settling && flightRevision == dock.flightRevision && !compositorTimeline.isEmpty { return }
+    if !compositorTimeline.isEmpty { panel.stopElasticFlight(); compositorTimeline = [] }
     let began = CACurrentMediaTime(), previousFrame = panel.frame
     let previousMask = panel.dockContourLayer
     panel.cancelResize()
-    let g = dock.geometry
+    let g = EdgeDockGeometry(pose:dock.pose,cache:contourCache)
     var b = dock.engaged ? g.bounds : CGRect(x:-dock.restSize.width,y:0,width:dock.restSize.width,height:dock.restSize.height)
     func reserve(_ rect: CGRect, x: CGFloat, y: CGFloat) -> CGRect {
       CGRect(x:rect.minX-x,y:rect.minY-y,width:-rect.minX+x,height:rect.height+2*y)
@@ -555,13 +671,14 @@ final class EdgeDockController: NSObject {
                                 trailingRadius:g.radius * min(1,max(0,dock.pose.inward)/16))
     flightRevision = dock.flightRevision
     if dock.settling && dock.automaticTicks && dock.pose.size == dock.targetPose.size {
-      let poses = dock.flightSamples(interval:sampleInterval)
-      if poses.count > 1 && poses.allSatisfy({ $0.size == dock.pose.size }) {
-        let frames = poses.map { NotchElasticFrame(pose:$0,viewport:b) }
+      let samples = dock.flightTimeline()
+      if samples.count > 1 && samples.allSatisfy({ $0.pose.size == dock.pose.size }) {
+        let frames = samples.map { NotchElasticFrame(pose:$0.pose,viewport:b,cache:contourCache) }
         compositorBegan = CACurrentMediaTime()
-        panel.startElasticFlight(frames:frames,interval:sampleInterval,began:compositorBegan)
-        dock.diagnostics?.composite(samples:poses.count)
-        compositorPoses = poses
+        dock.startPresentation(at:compositorBegan)
+        panel.startElasticFlight(frames:frames,times:samples.map(\.time),began:compositorBegan)
+        dock.diagnostics?.composite(samples:samples.count)
+        compositorTimeline = samples
       }
     }
     CATransaction.commit()
