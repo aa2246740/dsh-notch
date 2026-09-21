@@ -106,6 +106,8 @@ Notch 使用原生 AppKit / SwiftUI / Canvas 渲染。动画本身不调用模�
 | 屏幕上出现两个 Notch | 检查是否同时启动了手动版本和 App 壳管理的版本，只保留预期的那一份。 |
 | 更新源码后仍是旧效果 | 重新构建，并更新实际运行的可执行文件；只 `git pull` 不会替换已启动的原生进程。 |
 
+若状态灯叠影、点击后才恢复，可按发生时间查看 `~/.dsh/dsh-notch/presentation.jsonl`。日志只记录计数、动画阶段、布局和进程编号，不记录对话正文、标题或认证信息；达到 256 KiB 后轮换，只保留当前和上一份。刷新时会检查过期的转场并补做收尾，菜单交互期间也继续推进状态与布局计时器。
+
 当前 Host 插件依赖 `sessions`、`webServer`、`approval`、`userQuestions`、`agents` 服务，面向同一台 Mac 上的 DSH Web Host。原生界面的会话跳转会唤起 bundle ID 为 `local.dsh.desktop` 的 DSH.app；其他 App 壳的前台唤起需要适配。多 Home、远程 Host 和各版本 DSH 的兼容性不能只凭安装成功判断。
 
 ## 更新与开发

@@ -178,16 +178,74 @@ final class BoardModel: ObservableObject {
 
   func start() {
     if previewMode { return }
-    timer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
+    timer = Timer(timeInterval: 0.8, repeats: true) { [weak self] _ in
       Task { @MainActor in await self?.refresh() }
     }
     timer?.tolerance = 0.2
+    if let timer { RunLoop.main.add(timer, forMode: .common) }
     Task { await refresh() }
   }
 
   func refresh() async {
+    recoverExpiredPresentation()
     do { applySnapshot(try await client.status()) }
     catch { connected = false; self.error = "等待 Host…" }
+  }
+
+  /// A delayed completion callback must not leave stale ink/slots on
+  /// screen. Reconcile by the animation's own deadline, even if HTTP is down.
+  func recoverExpiredPresentation(at now: Date = Date()) {
+    if let flight = statusFlight, now.timeIntervalSince(flight.startedAt) > StatusFlight.duration + 0.25 {
+      recordPresentation("recover-flight")
+      finishStatusFlight(id: flight.id)
+    }
+    if let reply = decisionReturn, now.timeIntervalSince(reply.startedAt) > reply.duration + 0.25 {
+      recordPresentation("recover-reply")
+      finishDecisionReturn(id: reply.id)
+    }
+    if statusFlight == nil, decisionReturn == nil, orbitLayout != layoutTarget,
+       now.timeIntervalSince(layoutBegan) > 2 {
+      recordPresentation("recover-layout")
+      tickOrbitLayout(at: now)
+    }
+  }
+
+  private var lastRecordedState = ""
+  func recordIdleTransition(entering: Bool, transitioning: Bool, visibility: Double) {
+    recordPresentation("idle-transition", idle: ["entering": entering, "transitioning": transitioning, "visibility": visibility])
+  }
+  private func recordPresentation(_ event: String, idle: [String: Any] = [:]) {
+    guard !previewMode else { return }
+    let phase = statusFlight.map { String(describing: $0.outcome) } ?? (decisionReturn == nil ? "rest" : "reply")
+    let state = "\(busyCount)/\(completedUnreadCount)/\(failedRows.count)/\(needsAction)/\(phase)/\(expanded)"
+    guard event != "snapshot" || state != lastRecordedState else { return }
+    lastRecordedState = state
+    let entry: [String: Any] = ["at": Date().timeIntervalSince1970, "pid": ProcessInfo.processInfo.processIdentifier, "event": event,
+      "busy": busyCount, "done": completedUnreadCount, "failed": failedRows.count,
+      "decision": needsAction, "phase": phase, "expanded": expanded,
+      "layout": [orbitLayout.top, orbitLayout.middle, orbitLayout.bottom, orbitLayout.decision],
+      "target": [layoutTarget.top, layoutTarget.middle, layoutTarget.bottom, layoutTarget.decision],
+      "queued": pendingFlights.count, "idle": idle]
+    // Only counts and presentation state. No titles, messages, URLs or tokens.
+    let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dsh/dsh-notch")
+    let file = folder.appendingPathComponent("presentation.jsonl")
+    do {
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      if let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 256 * 1024 {
+        let previous = folder.appendingPathComponent("presentation.previous.jsonl")
+        try? FileManager.default.removeItem(at: previous)
+        try FileManager.default.moveItem(at: file, to: previous)
+      }
+    } catch {} // Missing log on first launch, or logging unavailable.
+    do {
+      if !FileManager.default.fileExists(atPath: file.path) {
+        FileManager.default.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o600])
+      }
+      let handle = try FileHandle(forWritingTo: file)
+      defer { try? handle.close() }
+      try handle.seekToEnd()
+      try handle.write(contentsOf: JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys]) + Data([10]))
+    } catch {} // Diagnostics must never interrupt rendering.
   }
 
   func applySnapshot(_ snap: NotchSnapshot) {
@@ -252,6 +310,7 @@ final class BoardModel: ObservableObject {
     startDecisionReturnIfPossible()
     startNextStatusFlight()
     updateOrbitLayout(animateBirth:!coldSnapshot)
+    recordPresentation("snapshot")
   }
 
   private func startNextStatusFlight() {
@@ -261,6 +320,7 @@ final class BoardModel: ObservableObject {
                               destinationBefore: next.destinationBefore, returnsToRunning: busyCount > 0, angle:decisionAngle(at:Date()))
     decisionSpin=DecisionSpin(began:flight.startedAt,angle:flight.angle,initialVelocity:DecisionSpin.runningVelocity,finalVelocity:DecisionSpin.runningVelocity)
     statusFlight = flight
+    recordPresentation("flight-start")
     Task { @MainActor [weak self] in
       try? await Task.sleep(for: .seconds(StatusFlight.duration))
       self?.finishStatusFlight(id: flight.id)
@@ -275,6 +335,7 @@ final class BoardModel: ObservableObject {
     startDecisionReturnIfPossible()
     startNextStatusFlight()
     updateOrbitLayout()
+    recordPresentation("flight-end")
     if finishedDecision && expandAfterDecision {
       expandAfterDecision = false
       if needsAction { expanded = true }
@@ -334,9 +395,10 @@ final class BoardModel: ObservableObject {
     layoutFrom=orbitLayout;layoutTarget=target;layoutBegan=now;layoutFlightID=presentationID
     if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { orbitLayout=target;return }
     layoutTimer?.invalidate()
-    layoutTimer=Timer.scheduledTimer(withTimeInterval:1.0/60,repeats:true) { [weak self] _ in
+    layoutTimer=Timer(timeInterval:1.0/60,repeats:true) { [weak self] _ in
       Task { @MainActor in self?.tickOrbitLayout() }
     }
+    if let layoutTimer { RunLoop.main.add(layoutTimer,forMode:.common) }
   }
   func tickOrbitLayout(at now:Date = Date()) {
     if let reply=decisionReturn {

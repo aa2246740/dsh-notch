@@ -418,6 +418,9 @@ struct IdleStatusSlot: View {
       if value { presence.returnColor=model.orbitLayout.decision > 0.1 ? 0xf2ff14:model.retainedFailureCount > 0 ? 0xff4000:model.retainedSuccessCount > 0 ? 0x34c759:0x4d6bfe }
       presence.set(value, director: director)
     }
+    .onChange(of: presence.transitioning) { _, value in
+      model.recordIdleTransition(entering: presence.entering, transitioning: value, visibility: presence.visibility)
+    }
     .onDisappear { presence.stop(); director.stop() }
   }
 }

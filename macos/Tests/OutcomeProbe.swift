@@ -128,6 +128,35 @@ import SwiftUI
     let velocity=(previous.distance-near.distance)/(StatusFlight.duration*0.0001)
     check(abs(velocity-9.5*DecisionSpin.runningVelocity)<0.05,"pen speed matches final rotating ring")
   }
+  // Delayed callbacks must not leave old result ink or a half-collapsed slot.
+  for count in [1,2] {
+    let m=BoardModel();m.previewMode=true;var rows=busyRows(count)
+    m.applySnapshot(snapshot(rows));m.tickOrbitLayout(at:Date().addingTimeInterval(2))
+    rows[0].busy=false;rows[0].unread=true;m.applySnapshot(snapshot(rows))
+    let flight=m.statusFlight!
+    m.recoverExpiredPresentation(at:flight.startedAt.addingTimeInterval(0.4))
+    check(m.statusFlight?.id==flight.id,"recovery must preserve an on-time stroke")
+    m.recoverExpiredPresentation(at:flight.startedAt.addingTimeInterval(4))
+    check(m.statusFlight==nil,"overdue completion is reconciled without a click")
+    check(m.orbitLayout==OrbitLayout(top:1,middle:count>1 ? 1:0),"overdue layout settles on exact result/work slots")
+    m.finishStatusFlight(id:flight.id)
+    check(m.statusFlight==nil,"late callback remains harmless after recovery")
+  }
+  let staleLayout=BoardModel();staleLayout.previewMode=true
+  var staleRows=busyRows(2);staleRows[0].busy=false;staleRows[0].unread=true
+  staleLayout.applySnapshot(snapshot(staleRows));staleLayout.tickOrbitLayout(at:Date().addingTimeInterval(3))
+  staleLayout.applySnapshot(snapshot([staleRows[1]]))
+  staleLayout.recoverExpiredPresentation(at:Date().addingTimeInterval(3))
+  check(staleLayout.orbitLayout==OrbitLayout(middle:1) && staleLayout.retainedSuccessCount==0,"stalled dismissal drops the stale green disk")
+  let staleReply=BoardModel();staleReply.previewMode=true;var replyRows=busyRows(2)
+  staleReply.applySnapshot(snapshot(replyRows));staleReply.tickOrbitLayout(at:Date().addingTimeInterval(2))
+  replyRows[0].approval=NotchApproval(id:"late",toolName:"offline");staleReply.applySnapshot(snapshot(replyRows))
+  staleReply.finishStatusFlight(id:staleReply.statusFlight!.id)
+  replyRows[0].approval=nil;staleReply.applySnapshot(snapshot(replyRows))
+  let lateReply=staleReply.decisionReturn!
+  staleReply.recoverExpiredPresentation(at:lateReply.startedAt.addingTimeInterval(4))
+  check(staleReply.decisionReturn==nil && staleReply.orbitLayout==OrbitLayout(middle:1),"overdue yellow reply leaves one clean blue slot")
+  print("CHECKED delayed completion, delayed layout and delayed reply recovery")
   print("FAILURES=\(failures)");exit(failures==0 ? 0:1)
  }
 }
