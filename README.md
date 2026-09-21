@@ -135,6 +135,8 @@ npm run test:idle
 npm run build:macos
 ```
 
+弹性收纳候选交互可在 [独立原生预览](tools/elastic-preview/README.md) 中试用；运行 `npm run build:elastic-preview` 构建，不连接 DSH、不调用模型，也不替换当前安装。
+
 ### 录屏 Demo（可选）
 
 用于开发、检查动画或录制演示视频，**不属于插件安装步骤**：

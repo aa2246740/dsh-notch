@@ -121,6 +121,8 @@ npm run test:idle
 npm run build:macos
 ```
 
+Try the candidate elastic edge-hiding gesture in the [standalone native preview](tools/elastic-preview/README.md), built with `npm run build:elastic-preview`. It uses local fixtures, makes no model requests, and does not replace an installed Notch.
+
 ### Optional recording demo
 
 For animation review and video recording, separate from plugin installation:

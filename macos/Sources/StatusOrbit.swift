@@ -521,7 +521,7 @@ struct StatusOrbitView: View {
   }
 
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion || (model.busyCount == 0 && model.statusFlight == nil && !model.decisionSpinActive))) { context in
+    TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: model.visuallyDocked || reduceMotion || (model.busyCount == 0 && model.statusFlight == nil && !model.decisionSpinActive))) { context in
       let now = renderDate ?? context.date
       let flight = reduceMotion ? nil : model.statusFlight
       let progress = flight.map { now.timeIntervalSince($0.startedAt) / StatusFlight.duration } ?? 1

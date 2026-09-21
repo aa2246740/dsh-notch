@@ -93,6 +93,7 @@ final class BoardModel: ObservableObject {
   @Published var currentIslandWidth: CGFloat = 32
   @Published var currentIslandHeight: CGFloat = 90
   @Published var isPillHovered: Bool = false
+  @Published var visuallyDocked = false
 
   @Published var orbitLayout = OrbitLayout()
   var retainedBusyCount = 0

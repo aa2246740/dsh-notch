@@ -402,7 +402,7 @@ struct IdleStatusSlot: View {
           .opacity(departing ? departure.statusOpacity:1-presence.visibility)
       }
       if presence.showsRobot(whenIdle: idle) {
-        TimelineView(.animation(minimumInterval: 1/60.0, paused: (!director.animating && !presence.transitioning && presence.visibility >= 1) || director.asleep || reduceMotion)) { timeline in
+        TimelineView(.animation(minimumInterval: 1/60.0, paused: model.visuallyDocked || (!director.animating && !presence.transitioning && presence.visibility >= 1) || director.asleep || reduceMotion)) { timeline in
           let stable = idle && !presence.transitioning
           let frame = stable ? director.displayFrame(at: timeline.date) : presence.presentedFrame(at:timeline.date)
           let sampled = frame.map { IdleClip(fps:1,duration:7,frames:[$0]) }
@@ -422,13 +422,22 @@ struct IdleStatusSlot: View {
       }
     }
     .frame(height: !hasStatus && !idle ? 0 : nil)
-    .onAppear { presence.set(idle, director: director, animated: false) }
+    .onAppear {
+      presence.set(idle, director: director, animated: false)
+      if model.visuallyDocked { director.stop() }
+    }
     .onChange(of: idle) { _, value in
       if value { presence.returnColor=model.orbitLayout.decision > 0.1 ? 0xf2ff14:model.retainedFailureCount > 0 ? 0xff4000:model.retainedSuccessCount > 0 ? 0x34c759:0x4d6bfe }
-      presence.set(value, director: director)
+      presence.set(value, director: director, animated: !model.visuallyDocked)
+      if model.visuallyDocked { director.stop() }
     }
     .onChange(of: presence.transitioning) { _, value in
       model.recordIdleTransition(entering: presence.entering, transitioning: value, visibility: presence.visibility)
+      if !value && model.visuallyDocked { director.stop() }
+    }
+    .onChange(of: model.visuallyDocked) { _, value in
+      if value { director.stop() }
+      else if idle { director.start() }
     }
     .onDisappear { presence.stop(); director.stop() }
   }

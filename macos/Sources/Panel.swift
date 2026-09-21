@@ -20,11 +20,32 @@ enum NotchGeometryAnimation {
 }
 
 final class NotchPanel: NSPanel {
+  var allowsMainWindow = false
+  var cancelDock: (() -> Void)?
+  override func cancelOperation(_ sender: Any?) { cancelDock?() }
+
+  func elasticMask(_ path: CGPath?) {
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    if let path {
+      let mask = CAShapeLayer(); mask.path = path
+      contentView?.layer?.mask = mask
+    } else { contentView?.layer?.mask = nil }
+    CATransaction.commit()
+  }
   private var resizeTimer: Timer?
   private var resizeTarget: NSSize?
   private var resizeGeneration = 0
 
   func cancelResize() {
+    if resizeTarget != nil {
+      // The AppKit animator outlives the fallback timer. Retarget its frame
+      // with zero duration before handing geometry to a direct drag.
+      let current = frame
+      NSAnimationContext.runAnimationGroup { context in
+        context.duration = 0
+        self.animator().setFrame(current, display: true)
+      }
+    }
     resizeTimer?.invalidate()
     resizeTimer = nil
     resizeTarget = nil
@@ -64,7 +85,7 @@ final class NotchPanel: NSPanel {
   }
 
   override var canBecomeKey: Bool { true }
-  override var canBecomeMain: Bool { false }
+  override var canBecomeMain: Bool { allowsMainWindow }
 
   // An accessory panel has no active app Edit menu to route Command keys.
   // Handle only standard editing commands, and only for our focused editor.

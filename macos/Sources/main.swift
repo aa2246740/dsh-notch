@@ -12,6 +12,14 @@ enum DshNotchMain {
       exit(missing.isEmpty ? 0 : 1)
     }
     let app = NSApplication.shared
+    if CommandLine.arguments.contains("--elastic-preview") || Bundle.main.bundleIdentifier == "local.dsh.notch.elastic-preview" {
+      app.setActivationPolicy(.regular)
+      let delegate = ElasticPreviewDelegate()
+      ElasticPreviewDelegate.hold = delegate
+      app.delegate = delegate
+      app.run()
+      return
+    }
     if CommandLine.arguments.contains("--demo") {
       app.setActivationPolicy(.regular)
       let delegate = DemoStudioDelegate()
@@ -35,8 +43,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let restH: CGFloat = 110
   private let topOffset: CGFloat = 100
   private let model = BoardModel()
+  private let dock = EdgeDockModel()
+  private var dockController: EdgeDockController?
   private var panel: NotchPanel?
-  private var hosting: NotchHostingView<RootView>?
+  private var hosting: NotchHostingView<EdgeDockSurface<RootView>>?
   private var cursorTimer: Timer?
   private var hostLifetime: HostLifetimeMonitor?
   private var foldWork: DispatchWorkItem?
@@ -52,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       panelSize: CGSize(width: panelW, height: restH),
       restSize: CGSize(width: restW, height: restH)
     )
-    let hosting = NotchHostingView(rootView: root)
+    let hosting = NotchHostingView(rootView: EdgeDockSurface(dock: dock, content: root))
     hosting.sizingOptions = []
     hosting.wantsLayer = true
     hosting.layer?.isOpaque = false
@@ -62,7 +72,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     self.panel = panel
     self.hosting = hosting
     pinToScreen()
+    dockController = EdgeDockController(dock: dock, panel: panel, hosting: hosting)
+    dockController?.onBegin = { [weak self] in
+      self?.foldWork?.cancel(); self?.foldWork = nil
+      self?.model.isPillHovered = false
+    }
+    dock.onHidden = { [weak self] hidden in
+      self?.model.visuallyDocked = hidden
+      UserDefaults.standard.set(hidden, forKey: "elastic-edge-hidden-v1")
+    }
+    dock.onSettled = { [weak self] hidden in if hidden { self?.model.expanded = false } }
     updateHits()
+    if UserDefaults.standard.bool(forKey: "elastic-edge-hidden-v1") { dock.setHidden(true, animated: false) }
     panel.orderFrontRegardless()
     model.start()
     let runtimeURL = ProcessInfo.processInfo.environment["DSH_NOTCH_RUNTIME_FILE"].map { URL(fileURLWithPath: $0) }
@@ -91,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationWillTerminate(_ notification: Notification) {
     hostLifetime?.stop()
     cursorTimer?.invalidate()
+    dock.stop()
   }
 
   @objc private func pinToScreen() {
@@ -116,6 +138,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       height: height
     )
     panel.setFrame(frame, display: true)
+    dockController?.resetAnchor()
+    if dock.hidden { dock.setHidden(true, animated: false) }
   }
 
   private func pointerOverVisual() -> Bool {
@@ -126,6 +150,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private func tickPointer() {
     guard panel != nil else { return }
     let hit = pointerOverVisual()
+    dock.hover(hit)
+    guard !dock.engaged else { return }
     if hit {
       enteredIsland = true
       foldWork?.cancel()
@@ -158,8 +184,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func updateHits() {
     guard let panel else { return }
+    if dock.hidden && !dock.settling && model.expanded { model.expanded = false }
     let width = max(1, model.currentIslandWidth)
     let height = min(max(1, model.currentIslandHeight), model.maximumExpandedHeight)
-    panel.resizeAnchored(to: NSSize(width: width, height: height), animated: true)
+    if let dockController { dockController.updateRest(NSSize(width: width, height: height)) }
+    else { panel.resizeAnchored(to: NSSize(width: width, height: height), animated: true) }
   }
 }
