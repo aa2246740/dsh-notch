@@ -39,23 +39,74 @@ interface HeldAsk {
 
 type Held = HeldApproval | HeldAsk
 
-interface SidebarRow { id: string; title: string; completed: boolean; running: boolean }
+interface SidebarRow { id: string; title: string; completed: boolean; running: boolean; updatedAt?: number }
 export class Board {
-  private sidebar: { clientId: string; at: number; rows: SidebarRow[]; projectionVersion?: number } | undefined
+  private sidebar: { clientId: string; at: number; focused: boolean; rows: SidebarRow[]; projectionVersion?: number } | undefined
+  private readonly instance = randomUUID()
+  private readonly traces: Record<string, unknown>[] = []
+  private lastMirrorTrace = ''
+  private lastRowTrace = ''
+
+  /** Bounded, content-free diagnostics for state-source races. */
+  diagnostics(): unknown {
+    return { stateRevision: 4, instance: this.instance,
+      sidebar: this.sidebar && { clientId: this.sidebar.clientId, at: this.sidebar.at, focused: this.sidebar.focused },
+      traces: this.traces }
+  }
+
+  private trace(event: string, value: Record<string, unknown>): void {
+    this.traces.push({ at: Date.now(), event, ...value })
+    if (this.traces.length > 160) this.traces.shift()
+  }
 
   syncSidebar(input: unknown): boolean {
     if (!input || typeof input !== 'object') return false
-    const data = input as { clientId?: unknown; focused?: unknown; rows?: unknown; projectionVersion?: unknown }
+    const data = input as { clientId?: unknown; focused?: unknown; rows?: unknown; projectionVersion?: unknown; viewed?: { id?: unknown; at?: unknown } }
     if (typeof data.clientId !== 'string' || !Array.isArray(data.rows) || data.rows.length > 1000) return false
     const rows: SidebarRow[] = []
     for (const row of data.rows) {
       if (!row || typeof row.id !== 'string' || !row.id.startsWith('session-') || typeof row.title !== 'string' || typeof row.completed !== 'boolean' || typeof row.running !== 'boolean') return false
-      rows.push({ id: row.id, title: row.title.slice(0, 512), completed: row.completed, running: row.running })
+      rows.push({ id: row.id, title: row.title.slice(0, 512), completed: row.completed, running: row.running,
+        ...(typeof row.updatedAt === 'number' && Number.isFinite(row.updatedAt) ? { updatedAt: row.updatedAt } : {}) })
+    }
+    const sessions = new Map(this.ctx.sessions.list().map(session => [session.id, session]))
+    // Completion is a fact, not a page-local negative flag. A page that was
+    // reloaded or selected a different conversation cannot retract another
+    // page's reminder. Explicit, timestamped reading acknowledgements can.
+    for (const row of rows) {
+      if (!row.completed || row.running) continue
+      const session = sessions.get(row.id)
+      if (session && (isChildSession(session) || this.isBusy(session))) continue
+      const turn = session ? foldSession(session).lastTurn : undefined
+      const seen = this.seen[row.id]
+      const completedAt = turn?.at ?? row.updatedAt
+      if (seen !== undefined && (completedAt === undefined || seen >= completedAt)) continue
+      this.browserCompletions.set(row.id, row)
+    }
+    const viewed = data.viewed
+    if (data.projectionVersion === 3 && data.focused === true && viewed
+      && typeof viewed.id === 'string' && typeof viewed.at === 'number' && Number.isFinite(viewed.at)
+      && rows.some(row => row.id === viewed.id && !row.running)) {
+      const session = sessions.get(viewed.id)
+      if (!session || (!isChildSession(session) && !this.conversationBusy(session, sessions))) this.readThrough(viewed.id, Math.min(viewed.at, Date.now()))
+    }
+    // Legacy clients can acknowledge only a reminder they themselves showed.
+    if (data.projectionVersion !== 3 && data.focused === true && this.sidebar?.clientId === data.clientId) {
+      for (const previous of this.sidebar.rows) {
+        if (!previous.completed || rows.some(row => row.id === previous.id && row.completed)) continue
+        const session = sessions.get(previous.id)
+        const at = session ? foldSession(session).lastTurn?.at : Date.now()
+        if (at !== undefined && (!session || !this.conversationBusy(session, sessions))) this.readThrough(previous.id, at)
+      }
     }
     // A background browser cannot overwrite the last foreground page's state.
-    if (this.sidebar && this.sidebar.clientId !== data.clientId && data.focused !== true && Date.now() - this.sidebar.at < 5000) return true
-    this.sidebar = { clientId: data.clientId, at: Date.now(), rows,
-      ...(data.projectionVersion === 2 ? { projectionVersion: 2 } : {}) }
+    if (this.sidebar && this.sidebar.clientId !== data.clientId && data.focused !== true && Date.now() - this.sidebar.at < 5000) { this.bump(); return true }
+    this.sidebar = { clientId: data.clientId, at: Date.now(), focused: data.focused === true, rows,
+      ...(data.projectionVersion === 2 || data.projectionVersion === 3 ? { projectionVersion: data.projectionVersion } : {}) }
+    const mirrorTrace = { clientId: data.clientId, focused: data.focused === true,
+      rows: rows.map(({ id, running, completed }) => ({ id, running, completed })) }
+    const signature = JSON.stringify(mirrorTrace)
+    if (signature !== this.lastMirrorTrace) { this.lastMirrorTrace = signature; this.trace('sidebar', mirrorTrace) }
     this.bump()
     return true
   }
@@ -68,6 +119,7 @@ export class Board {
   private readonly seen = loadSeen()
   private running = new Set<string>()
   private readonly pendingUnread = new Set<string>()
+  private readonly browserCompletions = new Map<string, SidebarRow>()
   private readonly listeners = new Set<() => void>()
   private focus: NotchFocus | null = null
 
@@ -116,7 +168,11 @@ export class Board {
       if (row) rows.push(row)
     }
     const freshSidebar = this.sidebarRows()
-    for (const source of this.sidebar?.rows ?? []) {
+    const coldRows = new Map(this.browserCompletions)
+    for (const source of freshSidebar ?? []) {
+      if (source.running) coldRows.set(source.id, source)
+    }
+    for (const source of coldRows.values()) {
       // The Host owns loaded session classification. A stale mirror must not
       // resurrect a filtered child as child:false or override a settled root.
       if (byId.has(source.id) || (!source.completed && !source.running)) continue
@@ -124,7 +180,8 @@ export class Board {
       // Retain completed cold rows until acknowledged; expire running-only
       // claims when their source stops reporting.
       if (source.running && !freshSidebar) continue
-      if (source.completed && this.seen[source.id] !== undefined) continue
+      const seen = this.seen[source.id]
+      if (source.completed && seen !== undefined && (source.updatedAt === undefined || seen >= source.updatedAt)) continue
       rows.push({ id: source.id, title: source.title, child: false, busy: source.running, unread: source.completed })
     }
     rows.sort((a, b) => Number(Boolean(b.approval || b.ask)) - Number(Boolean(a.approval || a.ask))
@@ -134,13 +191,22 @@ export class Board {
     this.running = new Set(
       sessions.filter((session) => this.isBusy(session)).map((session) => session.id),
     )
-    return { ok: true, generatedAt: Date.now(), origin, rows,
+    const stateRows = rows.map(row => ({ id: row.id, busy: row.busy, unread: row.unread,
+      turnAt: row.lastTurn?.at, action: Boolean(row.ask || row.approval) }))
+    const rowSignature = JSON.stringify(stateRows)
+    if (rowSignature !== this.lastRowTrace) {
+      this.lastRowTrace = rowSignature
+      this.trace('snapshot', { rows: stateRows, clientId: this.sidebar?.clientId,
+        mirrorAt: this.sidebar?.at, running: [...this.running], pendingUnread: [...this.pendingUnread] })
+    }
+    return { ok: true, stateRevision: 4, generatedAt: Date.now(), origin, rows,
       sidebarSyncedAt: freshSidebar ? this.sidebar?.at : undefined,
       sidebarProjectionVersion: freshSidebar ? this.sidebar?.projectionVersion : undefined }
   }
 
   markSeen(sessionId: string): void {
     this.pendingUnread.delete(sessionId)
+    this.browserCompletions.delete(sessionId)
     this.seen[sessionId] = Date.now()
     saveSeen(this.seen)
     this.bump()
@@ -149,11 +215,36 @@ export class Board {
   markAllSeen(): void {
     this.pendingUnread.clear()
     const now = Date.now()
+    for (const id of this.browserCompletions.keys()) this.seen[id] = now
+    this.browserCompletions.clear()
     for (const session of this.ctx.sessions.list()) {
       this.seen[session.id] = now
     }
     saveSeen(this.seen)
     this.bump()
+  }
+
+  private readThrough(sessionId: string, at: number): void {
+    const seen = this.seen[sessionId]
+    if ((seen ?? -Infinity) >= at) return
+    const session = this.ctx.sessions.list().find(item => item.id === sessionId)
+    const turn = session && foldSession(session).lastTurn
+    const completedAt = turn?.at ?? this.browserCompletions.get(sessionId)?.updatedAt
+    // An idle focused page reports every 400 ms. Persist once per result,
+    // not on every heartbeat for as long as that conversation stays open.
+    if (seen !== undefined && (completedAt === undefined || seen >= completedAt)) return
+    this.seen[sessionId] = at
+    if (completedAt === undefined || completedAt <= at) {
+      this.pendingUnread.delete(sessionId)
+      this.browserCompletions.delete(sessionId)
+    }
+    saveSeen(this.seen)
+    this.trace('read', { sessionId, through: at })
+  }
+
+  noteTurnEnd(session: Session, at = foldSession(session).lastTurn?.at): void {
+    if (isChildSession(session)) return
+    if (at !== undefined && (this.seen[session.id] ?? -Infinity) < at) this.pendingUnread.add(session.id)
   }
 
   /**
@@ -163,8 +254,7 @@ export class Board {
    */
   requestFocus(sessionId: string): boolean {
     const known = this.ctx.sessions.list().some((session) => session.id === sessionId)
-    const mirrored = this.sidebar?.rows.some(row => row.id === sessionId
-      && (row.completed || this.sidebarRows() !== undefined))
+    const mirrored = this.browserCompletions.has(sessionId) || this.sidebarRows()?.some(row => row.id === sessionId)
     if (!known && !mirrored) return false
     this.focus = { sessionId, at: Date.now() }
     this.bump()
@@ -266,6 +356,14 @@ export class Board {
     return this.ctx.agents.get(session.id)?.status === 'running'
   }
 
+  private conversationBusy(owner: Session, sessions: ReadonlyMap<string, Session>): boolean {
+    for (const member of sessions.values()) {
+      if (conversationOwner(member, sessions)?.id === owner.id
+        && (this.isBusy(member) || this.hasSubagentJob(member))) return true
+    }
+    return false
+  }
+
   private hasSubagentJob(session: Session): boolean {
     const agent = this.ctx.agents.get(session.id)
     if (!agent) return false
@@ -284,22 +382,14 @@ export class Board {
     const lastSeen = this.seen[session.id]
     const busy = members.some(member => this.isBusy(member) || this.hasSubagentJob(member))
     // Completion belongs to the owner's turn, never an individual worker.
-    if (this.isBusy(session)) {
+    if (folded.busy) {
       this.pendingUnread.delete(session.id)
-    } else if (this.running.has(session.id) && folded.lastTurn && !folded.lastTurn.failed) {
+    } else if (this.running.has(session.id) && folded.lastTurn) {
       this.pendingUnread.add(session.id)
     }
     const dismissed = lastSeen !== undefined && (folded.lastTurn === undefined || lastSeen >= folded.lastTurn.at)
-    // Preserve the latest browser unread decision through throttled heartbeats.
-    // An older snapshot cannot decide a turn that finished after it arrived.
-    const mirror = this.sidebar && (!folded.lastTurn || this.sidebar.at >= folded.lastTurn.at)
-      ? this.sidebar.rows : undefined
-    const unread = dismissed || busy
-      ? false
-      : mirror !== undefined
-        ? mirror.some(row => row.id === session.id && row.completed)
-        : this.pendingUnread.has(session.id)
-          || (folded.lastTurn !== undefined && lastSeen !== undefined && folded.lastTurn.at > lastSeen)
+    const unread = !dismissed && !busy
+      && (this.pendingUnread.has(session.id) || this.browserCompletions.has(session.id))
     const memberIds = new Set(members.map(member => member.id))
     // Keep the original request id/resolver so answering the root's yellow
     // lamp settles the correct child. Further child questions queue here.

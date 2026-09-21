@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Board } from '../src/board.ts'
+import { Board } from './isolated-board.mjs'
 
 function scenario(run) {
   const originalNow = Date.now
@@ -22,8 +22,10 @@ function scenario(run) {
       finish() { agent.status = 'idle'; events.push({ type: 'turn/end', time: ++now, data: { reason: { kind: 'completed' } } }) },
     }
   }
-  const mirror = rows => board.syncSidebar({ clientId: 'app', focused: true, projectionVersion: 2, rows })
-  try { run({ board, add, mirror, advance: ms => { now += ms }, rows: () => board.snapshot('').rows }) }
+  const mirror = rows => board.syncSidebar({ clientId: 'app', focused: true, projectionVersion: 3, rows })
+  const ack = id => board.syncSidebar({ clientId: 'app', focused: true, projectionVersion: 3,
+    rows: [{ id, title: 'Viewed', running: false, completed: false, updatedAt: now }], viewed: { id, at: now } })
+  try { run({ board, add, mirror, ack, advance: ms => { now += ms }, rows: () => board.snapshot('').rows }) }
   finally { Date.now = originalNow }
 }
 
@@ -31,7 +33,7 @@ test('read completion stays dismissed across repeated heartbeat expiry and recov
   const root = f.add('session-heartbeat-read')
   f.rows(); root.finish()
   assert.equal(f.rows()[0].unread, true)
-  f.mirror([]) // The user has opened it in DSH.
+  f.ack(root.id) // The user has opened it in DSH.
   for (let cycle = 0; cycle < 8; cycle++) {
     assert.deepEqual(f.rows(), [])
     f.advance(5_100)
@@ -47,7 +49,7 @@ test('loaded completion observed only through the browser survives an idle heart
   assert.equal(f.rows()[0].unread, true)
   f.advance(60_000)
   assert.equal(f.rows()[0]?.unread, true)
-  f.mirror([])
+  f.ack(root.id)
   f.advance(60_000)
   assert.deepEqual(f.rows(), [])
 }))
@@ -61,7 +63,7 @@ test('cold completed rows remain stable until a newer sidebar snapshot clears th
     assert.equal(f.board.requestFocus(row.id), true, 'a retained completion must remain openable')
     f.mirror([row])
   }
-  f.mirror([])
+  f.ack(row.id)
   f.advance(60_000)
   assert.deepEqual(f.rows(), [])
 }))
@@ -76,7 +78,7 @@ test('stale running-only browser rows still expire instead of inventing a comple
 test('cached read state from an earlier turn cannot suppress a new completion', () => scenario(f => {
   const root = f.add('session-heartbeat-new-turn')
   f.rows(); root.finish(); f.rows()
-  f.mirror([])
+  f.ack(root.id)
   assert.deepEqual(f.rows(), [])
   f.advance(1_000) // Even a still-fresh browser frame predates this new turn.
   root.start(); assert.equal(f.rows()[0].busy, true)

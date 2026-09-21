@@ -11,7 +11,7 @@ export const name = 'dsh-notch-focus-client'
 export const inject = ['sessions']
 
 interface SessionsOpen {
-  list: { getSnapshot(): { phase: string; ids: string[]; byId: Record<string, { id: string; displayTitle: string; completed?: boolean; running: boolean; parentId?: string; origin?: 'subagent' }> } }
+  list: { getSnapshot(): { phase: string; ids: string[]; current?: string; byId: Record<string, { id: string; displayTitle: string; updatedAt?: number; completed?: boolean; running: boolean; parentId?: string; origin?: 'subagent' }> } }
 
   open(id: string): void
   refresh(): Promise<void>
@@ -52,8 +52,15 @@ export function apply(ctx: ClientContext): void {
       if (snapshot.phase === 'ready') {
         // parentId also records independent user forks; only origin classifies
         // a delegated child, matching the official workspace sidebar.
-        const rows = snapshot.ids.map(id => snapshot.byId[id]).filter(row => row && row.origin !== 'subagent' && (row.completed || row.running)).map(row => ({ id: row.id, title: row.displayTitle, completed: row.completed === true, running: row.running }))
-        await fetch('/dsh-notch/sidebar', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientId, projectionVersion: 2, focused: document.hasFocus(), rows }) })
+        const rows = snapshot.ids.map(id => snapshot.byId[id]).filter(row => row && row.origin !== 'subagent').map(row => ({ id: row.id, title: row.displayTitle, completed: row.completed === true, running: row.running, updatedAt: row.updatedAt }))
+        const focused = document.hasFocus()
+        const current = rows.find(row => row.id === snapshot.current)
+        // updatedAt is the user's prompt timestamp, not the completion time.
+        // Capture this observation before sending it, so a delayed request
+        // cannot acknowledge a turn that finishes after the user looked.
+        const viewed = focused && current && !current.running
+          ? { id: current.id, at: Date.now() } : undefined
+        await fetch('/dsh-notch/sidebar', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientId, projectionVersion: 3, focused, viewed, rows }) })
       }
       if (stopped) return
       const response = await fetch('/dsh-notch/pending-focus', { cache: 'no-store' })

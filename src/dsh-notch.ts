@@ -30,6 +30,7 @@ export function apply(ctx: Context) {
   ctx.effect(() => ctx.on('session/disposed', notify), 'dsh-notch: disposed')
   ctx.effect(() => ctx.on('session/event', (session, event) => {
     const type = String(event.type)
+    if (type === 'turn/end') board.noteTurnEnd(session, event.time)
     if (type === 'turn/start' || type === 'turn/end' || type === 'session/title') {
       notify()
     }

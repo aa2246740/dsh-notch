@@ -356,7 +356,7 @@ final class IdlePresence: ObservableObject {
     transitionAt=Date();transitionIdle=idle;transitioning=animated
     if !idle { departureProgress=animated ? 0:1 }
 
-    guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { transitioning=false;visibility = end; return }
+    guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { transitioning=false;visibility=end;entering=idle;return }
     let began = ProcessInfo.processInfo.systemUptime
     timer = Timer.scheduledTimer(withTimeInterval: 1/60.0, repeats: true) { [weak self] _ in
       Task { @MainActor in
@@ -366,14 +366,23 @@ final class IdlePresence: ObservableObject {
         let smooth = idle ? IdleInterpolation.smooth(t/0.32) : IdleInterpolation.smooth((t-0.68)/0.32)
         self.visibility = start + (end-start)*smooth
         if t >= 1 {
-          self.timer?.invalidate(); self.timer = nil
-          let final=self.presentedFrame(at:Date())
-          self.transitioning=false
-          if idle { director.resume("blink", elapsed:0, from:final) }
+          self.finishTransition(director: director)
         }
       }
     }
   }
+  func finishTransition(director: IdleDirector) {
+    timer?.invalidate(); timer=nil; generation += 1
+    let final=presentedFrame(at:Date())
+    // A tiny positive residue still paints a solid origin disk on entering.
+    // Set the exact endpoint and invalidate queued ticks after a reversal.
+    visibility=transitionIdle ? 1:0
+    entering=transitionIdle
+    if !transitionIdle { departureProgress=1 }
+    transitioning=false
+    if transitionIdle { director.resume("blink", elapsed:0, from:final) }
+  }
+  func showsRobot(whenIdle idle: Bool) -> Bool { idle || visibility > 0.0001 }
   func stop() { generation += 1; timer?.invalidate(); timer = nil }
 }
 
@@ -392,7 +401,7 @@ struct IdleStatusSlot: View {
         StatusOrbitView(model: model,workReveal:departing ? departure.statusScale:1)
           .opacity(departing ? departure.statusOpacity:1-presence.visibility)
       }
-      if presence.visibility > 0 || idle {
+      if presence.showsRobot(whenIdle: idle) {
         TimelineView(.animation(minimumInterval: 1/60.0, paused: (!director.animating && !presence.transitioning && presence.visibility >= 1) || director.asleep || reduceMotion)) { timeline in
           let stable = idle && !presence.transitioning
           let frame = stable ? director.displayFrame(at: timeline.date) : presence.presentedFrame(at:timeline.date)

@@ -11,6 +11,7 @@
     "test:geometry": "sh macos/Tests/geometry.sh",
     "build:macos": "swift build --package-path macos -c release",
     "test:outcome": "sh macos/Tests/outcome.sh",
+    "test:presentation": "sh macos/Tests/presentation.sh",
     "test:idle": "sh macos/Tests/idle.sh",
     "build:demo": "sh tools/recording/build.sh",
     "test:scrollbar": "sh macos/Tests/scrollbar.sh",

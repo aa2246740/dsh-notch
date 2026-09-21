@@ -26,7 +26,7 @@ Questions retain their original request ids and resolvers after projection onto 
 
 ## Verification and limits
 
-`npm test` covers 48 cases, including sequential workers, resumed children with reversed load order, cancellation, nested questions, remote background jobs, stopping/terminal states, job ownership, the real browser companion's mirror submission, and heartbeat interruptions. The original local-worker fix failed 7 of its 10 new regression cases. Before the follow-up fixes, background cases failed 5 of 6 and the browser fork/origin regression failed.
+`npm test` covers 59 cases, including sequential workers, resumed children with reversed load order, cancellation, nested questions, remote background jobs, stopping/terminal states, job ownership, the real browser companion's mirror submission, heartbeat interruptions, conflicting browser clients, and delayed reading acknowledgements. Reading an idle parent while its child or remote job still runs cannot prematurely acknowledge the eventual result. The original local-worker fix failed 7 of its 10 new regression cases. Before the follow-up fixes, background cases failed 5 of 6 and the browser fork/origin regression failed.
 
 The opt-in probe uses the selected Harness's actual built Cordis, SessionStore, AgentRegistry, LocalJobRegistry, `childSessionMeta`, and `subprocessRunHandle`. It verifies metadata, idle-parent job activity, discovery after a late load, non-consuming observation, cancellation settlement, and ordinary versus delegated forks:
 
@@ -40,4 +40,12 @@ The probe creates only an isolated in-memory registry and temporary Notch storag
 
 A browser heartbeat previously acted as both a five-second running lease and an unread-state lease. Expiration switched loaded sessions back to a different unread calculation and removed cold completed sessions; the next heartbeat reversed that decision. A background or throttled page could therefore animate a completed lamp repeatedly without any new result.
 
-Unread decisions now survive heartbeat interruptions. Only running claims from an unloaded session expire. A retained completion remains openable, and a cached browser decision cannot suppress a turn that ended after that snapshot arrived. The regression checks repeat expiry/recovery, cold and loaded completions, stale running claims, and a newer completion arriving while an old browser snapshot is still fresh.
+Unread decisions now survive heartbeat interruptions. Only running claims from an unloaded session expire. A retained completion remains openable. The regression checks repeat expiry/recovery, cold and loaded completions, stale running claims, and a newer completion arriving while an old browser snapshot is still fresh.
+
+That expiry fix alone did not reconcile two pages: Harness's `completedNotifications` is local to each browser. Another page's missing reminder must not cancel a completion. Projection version 3 reports explicit reading acknowledgements only for the focused page's selected, inactive conversation. It captures the time of that observation before sending; the list's `updatedAt` is the user prompt time and is not a completion timestamp. The Host retains positive completion facts and a monotonic read-through timestamp. A delayed acknowledgement cannot clear a later turn, and an old positive browser flag cannot resurrect a read result. Host `turn/end` records short and failed root turns even when no polling request saw them running. A cold Host load no longer replays historical results based solely on an old read timestamp.
+
+## Native presentation interruption
+
+A reversed robot entry could finish with a tiny positive visibility residue while still marked as entering. Its canvas then painted a solid origin-color disk over the status number. `IdlePresence` now commits exact endpoints, clears the departure direction, and invalidates queued timer ticks. Polling is serialized and rejects older snapshots so delayed HTTP responses cannot reverse a newer result.
+
+`npm run test:presentation` verifies reversed entries, exact endpoints, late snapshots, and a 40-state interruption replay without a model or live session. It also renders before/after native PNGs (set `NOTCH_PRESENTATION_OUTPUT` to an output directory). `npm run test:outcome` separately exercises the existing outcome motion and layout. Authenticated `GET /dsh-notch/diagnostics` exposes a bounded, content-free trace of state sources and reading acknowledgements for future incident diagnosis; it contains no titles, message content, or credentials.

@@ -140,6 +140,9 @@ final class BoardModel: ObservableObject {
   let client = NotchClient()
   var previewMode = false
   private var timer: Timer?
+  private var refreshing = false
+  private var refreshAgain = false
+  private var latestSnapshotAt = -Double.infinity
 
   var needsAction: Bool { rows.contains(where: \.needsAction) }
   var anyBusy: Bool { rows.contains(where: \.busy) }
@@ -187,9 +190,15 @@ final class BoardModel: ObservableObject {
   }
 
   func refresh() async {
-    recoverExpiredPresentation()
-    do { applySnapshot(try await client.status()) }
-    catch { connected = false; self.error = "等待 Host…" }
+    if refreshing { refreshAgain = true; return }
+    refreshing = true
+    defer { refreshing = false }
+    repeat {
+      refreshAgain = false
+      recoverExpiredPresentation()
+      do { applySnapshot(try await client.status()) }
+      catch { connected = false; self.error = "等待 Host…" }
+    } while refreshAgain
   }
 
   /// A delayed completion callback must not leave stale ink/slots on
@@ -249,6 +258,8 @@ final class BoardModel: ObservableObject {
   }
 
   func applySnapshot(_ snap: NotchSnapshot) {
+    guard snap.generatedAt >= latestSnapshotAt else { return }
+    latestSnapshotAt = snap.generatedAt
     let coldSnapshot = !initialized
     let beforeBusy = busyCount
     let beforeSuccess = completedUnreadCount

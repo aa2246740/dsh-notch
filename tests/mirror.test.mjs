@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {Board} from '../src/board.ts';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {Board} from './isolated-board.mjs';
 const ctx={sessions:{list:()=>[]},agents:{get:()=>undefined},get:()=>undefined,logger:{warn:()=>{}}};
 test('sidebar completion survives cold session; opening in DSH clears green; background page cannot overwrite',()=>{const b=new Board(ctx);const row={id:'session-cold',title:'Cold',running:false,completed:true};assert.equal(b.syncSidebar({clientId:'app',focused:true,rows:[row]}),true);assert.equal(b.snapshot('').rows[0].unread,true);assert.equal(b.requestFocus(row.id),true);b.syncSidebar({clientId:'app',focused:true,rows:[]});assert.equal(b.snapshot('').rows.length,0);b.syncSidebar({clientId:'browser',focused:false,rows:[row]});assert.equal(b.snapshot('').rows.length,0)});
 test('malformed mirror never replaces previous valid state',()=>{const b=new Board(ctx);assert.equal(b.syncSidebar({clientId:'app',rows:[{id:123}]}),false);assert.deepEqual(b.snapshot('').rows,[])});

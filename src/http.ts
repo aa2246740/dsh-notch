@@ -120,6 +120,11 @@ export function attachHttp(ctx: Context, board: Board, token: string, origin: st
       return
     }
 
+    if (method === 'GET' && path === `${PREFIX}/diagnostics`) {
+      send(res, 200, board.diagnostics())
+      return
+    }
+
     if (method === 'GET' && path === `${PREFIX}/events`) {
       const id = randomUUID()
       res.writeHead(200, {
