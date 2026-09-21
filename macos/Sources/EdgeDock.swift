@@ -11,8 +11,10 @@ struct EdgeDockPose: Equatable {
   var conceal: CGFloat = 0
   var size: CGSize { CGSize(width: width, height: height) }
   var body: CGRect { CGRect(x: -width - inward, y: down, width: width, height: height) }
-  static let hidden = EdgeDockPose(width: 6, height: 28, conceal: 1)
-  static let peek = EdgeDockPose(width: 12, height: 28, conceal: 1)
+  static func tucked(size: CGSize, peeking: Bool = false) -> EdgeDockPose {
+    let exposed = min(size.width, peeking ? 14 : 8)
+    return EdgeDockPose(width: size.width, height: size.height, inward: exposed - size.width, conceal: 1)
+  }
 }
 
 struct EdgeSpring {
@@ -48,7 +50,6 @@ final class EdgeDockModel: ObservableObject {
   private var hovered = false
   private var beganHidden = false
   private var grabbed = EdgeDockPose()
-  private var grabFraction = CGPoint(x: 0.5, y: 0.5)
   private var lastMotionTime = 0.0
   private var releaseVelocity = CGSize.zero
   private var displacement = CGSize.zero
@@ -57,13 +58,13 @@ final class EdgeDockModel: ObservableObject {
   private var timer: Timer?
   private var generation = 0
   private var clockTime = 0.0
-  private var contactFromInside = true
   var blocksContent: Bool { hidden || dragging || pose.conceal > 0.01 }
   var contentOpacity: Double {
     let t = min(1, max(0, (pose.conceal - 0.25) / 0.60))
     return Double(1 - t * t * (3 - 2 * t))
   }
-  var geometry: EdgeDockGeometry { EdgeDockGeometry(pose: pose, attachmentY: contentSize.height / 2) }
+  var geometry: EdgeDockGeometry { EdgeDockGeometry(pose: pose) }
+  private var tuckedPose: EdgeDockPose { .tucked(size: contentSize, peeking: hovered) }
 
   func updateRest(_ size: CGSize) {
     let previous = restSize
@@ -73,12 +74,10 @@ final class EdgeDockModel: ObservableObject {
   }
   private var shownPose: EdgeDockPose { EdgeDockPose(width: restSize.width, height: restSize.height) }
 
-  func begin(size: CGSize, grab: CGPoint = CGPoint(x: 0.5, y: 0.5), at time: Double) {
+  func begin(size: CGSize, at time: Double) {
     stop()
     if !engaged { pose = EdgeDockPose(width: size.width, height: size.height); contentSize = size }
     beganHidden = hidden
-    if hidden { contentSize = restSize }
-    grabFraction = CGPoint(x: min(1, max(0, grab.x)), y: min(1, max(0, grab.y)))
     grabbed = pose; lastMotionTime = time; displacement = .zero; releaseVelocity = .zero
     engaged = true; dragging = true
     onBegin?()
@@ -100,13 +99,11 @@ final class EdgeDockModel: ObservableObject {
     var next = grabbed
     if beganHidden {
       let reveal = min(1, max(0, hypot(inward, down) / 64))
-      next.width += (restSize.width - grabbed.width) * reveal
-      next.height += (restSize.height - grabbed.height) * reveal
       next.conceal = grabbed.conceal * (1 - reveal)
     }
-    // Preserve the point under the cursor, including while the nub grows.
-    next.inward = grabbed.inward + inward - (next.width - grabbed.width) * (1 - grabFraction.x)
-    next.down = grabbed.down + down - (next.height - grabbed.height) * grabFraction.y
+    // Translate the original shell, including when pulling its exposed slice out.
+    next.inward = grabbed.inward + inward
+    next.down = grabbed.down + down
     pose = next; onFrame?()
   }
 
@@ -125,18 +122,16 @@ final class EdgeDockModel: ObservableObject {
   }
   func setHidden(_ value: Bool, velocity: CGSize? = nil, animated: Bool = true) {
     if !engaged { pose = shownPose; contentSize = restSize }
-    if !value && hidden { contentSize = restSize }
     engaged = true; hidden = value; dragging = false
-    contactFromInside = pose.inward >= 0
     onHidden?(value)
-    animate(to: value ? (hovered ? .peek : .hidden) : shownPose, velocity: velocity, animated: animated)
+    animate(to: value ? tuckedPose : shownPose, velocity: velocity, animated: animated)
   }
   func hover(_ value: Bool) {
     guard hovered != value else { return }
     hovered = value
     // Hover must not restart or cancel the flight back to the edge.
-    guard hidden && !dragging && abs(pose.inward) < 0.1 && abs(pose.down) < 0.1 else { return }
-    animate(to: value ? .peek : .hidden)
+    guard hidden && !dragging && !settling else { return }
+    animate(to: tuckedPose)
   }
   private func animate(to next: EdgeDockPose, velocity: CGSize? = nil, animated: Bool = true) {
     let old = springs
@@ -165,14 +160,13 @@ final class EdgeDockModel: ObservableObject {
     guard settling, dt > 0 else { return }
     let values = [target.inward, target.down, target.width, target.height, target.conceal]
     for index in springs.indices {
-      springs[index].step(to: values[index], dt: min(dt, 0.05), damping: index < 2 ? 0.60 : 1)
+      // Damping into the screen keeps the exposed slice visible; vertical
+      // rebound and restoration preserve the rubber's elasticity.
+      let damping: CGFloat = index == 0 ? (hidden ? 0.90 : 0.60) : index == 1 ? 0.60 : 1
+      springs[index].step(to: values[index], dt: min(dt, 0.05), damping: damping)
     }
-    // A soft contact compresses the shell rather than losing it off-screen.
-    let contact = contactFromInside ? max(0, -springs[0].value) : 0
-    let compression = 1 / (1 + contact * 0.035)
-    pose = EdgeDockPose(width: max(3, springs[2].value * compression),
-                        height: max(12, springs[3].value * (1 + min(0.16, contact * 0.012))),
-                        inward: contactFromInside ? max(0, springs[0].value) : springs[0].value, down: springs[1].value,
+    pose = EdgeDockPose(width: max(1, springs[2].value), height: max(1, springs[3].value),
+                        inward: springs[0].value, down: springs[1].value,
                         conceal: min(1, max(0, springs[4].value)))
     if springs.indices.allSatisfy({ springs[$0].settled(at: values[$0]) }) { finish() }
     else { onFrame?() }
@@ -181,7 +175,7 @@ final class EdgeDockModel: ObservableObject {
     stop(); pose = target
     if !hidden { engaged = false; contentSize = restSize }
     onFrame?(); onSettled?(hidden)
-    if hidden && target != (hovered ? .peek : .hidden) { animate(to: hovered ? .peek : .hidden) }
+    if hidden && target != tuckedPose { animate(to: tuckedPose) }
   }
   func stop() { generation += 1; timer?.invalidate(); timer = nil; settling = false }
 }
@@ -192,34 +186,18 @@ struct EdgeDockGeometry {
   let path: Path
   let radius: CGFloat
 
-  init(pose: EdgeDockPose, attachmentY: CGFloat) {
+  init(pose: EdgeDockPose) {
     body = pose.body
-    let distance = hypot(pose.inward, pose.down)
-    radius = min(pose.width / 2, 16 + (2 - 16) * pose.conceal)
-    let rightRadius = radius * min(1, distance / 20)
-    var outline = Self.roundedBody(body, left: radius, right: rightRadius)
-    if distance > 0.01 {
-      let c = CGPoint(x: body.midX, y: body.midY)
-      let anchor = CGPoint(x: 0, y: attachmentY)
-      let dx = anchor.x - c.x, dy = anchor.y - c.y
-      let length = max(1, hypot(dx, dy))
-      let normal = CGPoint(x: -dy / length, y: dx / length)
-      let head = min(body.width, body.height) * 0.38
-      let neck = max(2, min(12, head) / (1 + distance / 85))
-      let a = CGPoint(x: c.x - normal.x * head, y: c.y - normal.y * head)
-      let b = CGPoint(x: c.x + normal.x * head, y: c.y + normal.y * head)
-      let reach = min(length * 0.42, max(20, body.width * 0.8 + abs(pose.inward) * 0.4))
-      var tail = Path()
-      tail.move(to: a)
-      tail.addCurve(to: CGPoint(x: 0, y: anchor.y - neck),
-                    control1: CGPoint(x: a.x + dx * 0.45, y: a.y + dy * 0.45),
-                    control2: CGPoint(x: -reach, y: anchor.y - neck))
-      tail.addLine(to: CGPoint(x: 0, y: anchor.y + neck))
-      tail.addCurve(to: b, control1: CGPoint(x: -reach, y: anchor.y + neck),
-                    control2: CGPoint(x: b.x + dx * 0.45, y: b.y + dy * 0.45))
-      tail.closeSubpath()
-      outline.addPath(tail)
-    }
+    radius = min(16, pose.width / 2, pose.height / 2)
+    // A single surface under tension, not a rigid head with a separate cable.
+    // Behind the screen the attachment translates with the shell, leaving an
+    // exact crop of the original cap instead of manufacturing a new nub.
+    let anchorX = max(0, body.maxX)
+    let freedCorner = radius * min(1, max(0, pose.inward) / 16)
+    let original = Self.shell(in: body, radius: radius, trailing: freedCorner)
+    let outline = abs(pose.down) < 0.0001 && pose.inward <= 0 ? original : Self.stretchedHull(
+      original, anchors: [CGPoint(x: anchorX, y: 0), CGPoint(x: anchorX, y: pose.height)]
+    )
     path = outline
     let raw = outline.boundingRect
     bounds = CGRect(x: min(-1, raw.minX), y: raw.minY,
@@ -228,19 +206,54 @@ struct EdgeDockGeometry {
   var localBody: CGRect { body.offsetBy(dx: -bounds.minX, dy: -bounds.minY) }
   var localPath: Path { path.applying(CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY)) }
 
-  static func roundedBody(_ b: CGRect, left: CGFloat, right: CGFloat) -> Path {
-    let l = min(left, b.height / 2), r = min(right, b.height / 2)
-    var p = Path()
-    p.move(to: CGPoint(x: b.minX + l, y: b.minY))
-    p.addLine(to: CGPoint(x: b.maxX - r, y: b.minY))
-    p.addQuadCurve(to: CGPoint(x: b.maxX, y: b.minY + r), control: CGPoint(x: b.maxX, y: b.minY))
-    p.addLine(to: CGPoint(x: b.maxX, y: b.maxY - r))
-    p.addQuadCurve(to: CGPoint(x: b.maxX - r, y: b.maxY), control: CGPoint(x: b.maxX, y: b.maxY))
-    p.addLine(to: CGPoint(x: b.minX + l, y: b.maxY))
-    p.addQuadCurve(to: CGPoint(x: b.minX, y: b.maxY - l), control: CGPoint(x: b.minX, y: b.maxY))
-    p.addLine(to: CGPoint(x: b.minX, y: b.minY + l))
-    p.addQuadCurve(to: CGPoint(x: b.minX + l, y: b.minY), control: CGPoint(x: b.minX, y: b.minY))
-    p.closeSubpath(); return p
+  static func shell(in rect: CGRect, radius: CGFloat = 16, trailing: CGFloat = 0) -> Path {
+    UnevenRoundedRectangle(topLeadingRadius:radius,bottomLeadingRadius:radius,
+                          bottomTrailingRadius:trailing,topTrailingRadius:trailing,style:.continuous).path(in:rect)
+  }
+
+  private static func stretchedHull(_ original: Path, anchors: [CGPoint]) -> Path {
+    // Sample the very same continuous corners used by RootView. Convex tension
+    // keeps that cap, joins its tangents to the full edge and cannot form an
+    // S-shaped cable or an overlapping second body. Curve error is subpixel.
+    var points = anchors, current = CGPoint.zero
+    original.forEach { element in
+      switch element {
+      case .move(let p), .line(let p): points.append(p); current = p
+      case .quadCurve(let p, let c):
+        let a = current
+        for step in 1...32 {
+          let t = CGFloat(step)/32, s = 1-t
+          points.append(CGPoint(x:s*s*a.x+2*s*t*c.x+t*t*p.x, y:s*s*a.y+2*s*t*c.y+t*t*p.y))
+        }
+        current = p
+      case .curve(let p, let c, let d):
+        let a = current
+        for step in 1...32 {
+          let t = CGFloat(step)/32, s = 1-t
+          points.append(CGPoint(x:s*s*s*a.x+3*s*s*t*c.x+3*s*t*t*d.x+t*t*t*p.x,
+                                y:s*s*s*a.y+3*s*s*t*c.y+3*s*t*t*d.y+t*t*t*p.y))
+        }
+        current = p
+      case .closeSubpath: break
+      }
+    }
+    let sorted = points.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+    func cross(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> CGFloat {
+      (b.x-a.x)*(c.y-a.y) - (b.y-a.y)*(c.x-a.x)
+    }
+    func half(_ input: [CGPoint]) -> [CGPoint] {
+      var result = [CGPoint]()
+      for point in input {
+        while result.count >= 2 && cross(result[result.count-2], result.last!, point) <= 0 { result.removeLast() }
+        result.append(point)
+      }
+      return Array(result.dropLast())
+    }
+    let hull = half(sorted) + half(Array(sorted.reversed()))
+    var path = Path()
+    path.addLines(hull)
+    path.closeSubpath()
+    return path
   }
 }
 
@@ -255,15 +268,14 @@ struct EdgeDockSurface<Content: View>: View {
   var body: some View {
     GeometryReader { viewport in
       let g = dock.geometry
-      let base = dock.engaged ? dock.contentSize : viewport.size
       let body = dock.engaged ? g.localBody : CGRect(origin: .zero, size: viewport.size)
       ZStack(alignment: .topLeading) {
         if dock.engaged { g.localPath.fill(Color.black) }
         content
-          .frame(width: max(1, base.width), height: max(1, base.height))
-          .scaleEffect(x: body.width / max(1, base.width), y: body.height / max(1, base.height), anchor: .topLeading)
+          .frame(width: max(1, body.width), height: max(1, body.height))
           .offset(x: body.minX, y: body.minY)
           .opacity(dock.contentOpacity)
+          .disabled(dock.blocksContent)
           .allowsHitTesting(!dock.blocksContent)
           .accessibilityHidden(dock.blocksContent)
       }
@@ -322,7 +334,9 @@ final class EdgeDockController: NSObject {
     self.dock = dock; self.panel = panel
     super.init()
     pan = EdgePanGesture(target: self, action: #selector(panned(_:)))
-    pan.buttonMask = 1; pan.delaysPrimaryMouseButtonEvents = false
+    // Deliver an ordinary click when the pan fails, but never replay a release
+    // into an option/approval after that same press has become a drag.
+    pan.buttonMask = 1; pan.delaysPrimaryMouseButtonEvents = true
     hosting.addGestureRecognizer(pan)
     resetAnchor()
     dock.onFrame = { [weak self] in self?.render() }
@@ -337,10 +351,7 @@ final class EdgeDockController: NSObject {
       guard let panel else { return }
       if !dock.engaged { resetAnchor() }
       pointerOrigin = pan.downScreen
-      let body = dock.engaged ? dock.pose.body : CGRect(x: -panel.frame.width, y: 0, width: panel.frame.width, height: panel.frame.height)
-      let grab = CGPoint(x: (pointerOrigin.x - origin.x - body.minX) / body.width,
-                         y: (origin.y - pointerOrigin.y - body.minY) / body.height)
-      dock.begin(size: panel.frame.size, grab: grab, at: pan.downTime)
+      dock.begin(size: panel.frame.size, at: pan.downTime)
       fallthrough
     case .changed:
       dock.drag(inward: pointerOrigin.x - pointer.x, down: pointerOrigin.y - pointer.y, at: pan.eventTime)
