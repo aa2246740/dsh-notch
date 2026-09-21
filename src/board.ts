@@ -115,10 +115,15 @@ export class Board {
       const row = this.rowFor(owner, members)
       if (row) rows.push(row)
     }
-    for (const source of this.sidebarRows() ?? []) {
+    const freshSidebar = this.sidebarRows()
+    for (const source of this.sidebar?.rows ?? []) {
       // The Host owns loaded session classification. A stale mirror must not
       // resurrect a filtered child as child:false or override a settled root.
       if (byId.has(source.id) || (!source.completed && !source.running)) continue
+      // Heartbeat freshness is a liveness lease, not an unread-state change.
+      // Retain completed cold rows until acknowledged; expire running-only
+      // claims when their source stops reporting.
+      if (source.running && !freshSidebar) continue
       if (source.completed && this.seen[source.id] !== undefined) continue
       rows.push({ id: source.id, title: source.title, child: false, busy: source.running, unread: source.completed })
     }
@@ -130,8 +135,8 @@ export class Board {
       sessions.filter((session) => this.isBusy(session)).map((session) => session.id),
     )
     return { ok: true, generatedAt: Date.now(), origin, rows,
-      sidebarSyncedAt: this.sidebarRows() ? this.sidebar?.at : undefined,
-      sidebarProjectionVersion: this.sidebarRows() ? this.sidebar?.projectionVersion : undefined }
+      sidebarSyncedAt: freshSidebar ? this.sidebar?.at : undefined,
+      sidebarProjectionVersion: freshSidebar ? this.sidebar?.projectionVersion : undefined }
   }
 
   markSeen(sessionId: string): void {
@@ -158,7 +163,9 @@ export class Board {
    */
   requestFocus(sessionId: string): boolean {
     const known = this.ctx.sessions.list().some((session) => session.id === sessionId)
-    if (!known && !this.sidebarRows()?.some(row => row.id === sessionId)) return false
+    const mirrored = this.sidebar?.rows.some(row => row.id === sessionId
+      && (row.completed || this.sidebarRows() !== undefined))
+    if (!known && !mirrored) return false
     this.focus = { sessionId, at: Date.now() }
     this.bump()
     return true
@@ -283,7 +290,10 @@ export class Board {
       this.pendingUnread.add(session.id)
     }
     const dismissed = lastSeen !== undefined && (folded.lastTurn === undefined || lastSeen >= folded.lastTurn.at)
-    const mirror = this.sidebarRows()
+    // Preserve the latest browser unread decision through throttled heartbeats.
+    // An older snapshot cannot decide a turn that finished after it arrived.
+    const mirror = this.sidebar && (!folded.lastTurn || this.sidebar.at >= folded.lastTurn.at)
+      ? this.sidebar.rows : undefined
     const unread = dismissed || busy
       ? false
       : mirror !== undefined

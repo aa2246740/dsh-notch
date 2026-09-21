@@ -26,7 +26,7 @@ Questions retain their original request ids and resolvers after projection onto 
 
 ## Verification and limits
 
-`npm test` covers 43 cases, including sequential workers, resumed children with reversed load order, cancellation, nested questions, remote background jobs, stopping/terminal states, job ownership, and the real browser companion's mirror submission. The original local-worker fix failed 7 of its 10 new regression cases. Before the follow-up fixes, background cases failed 5 of 6 and the browser fork/origin regression failed.
+`npm test` covers 48 cases, including sequential workers, resumed children with reversed load order, cancellation, nested questions, remote background jobs, stopping/terminal states, job ownership, the real browser companion's mirror submission, and heartbeat interruptions. The original local-worker fix failed 7 of its 10 new regression cases. Before the follow-up fixes, background cases failed 5 of 6 and the browser fork/origin regression failed.
 
 The opt-in probe uses the selected Harness's actual built Cordis, SessionStore, AgentRegistry, LocalJobRegistry, `childSessionMeta`, and `subprocessRunHandle`. It verifies metadata, idle-parent job activity, discovery after a late load, non-consuming observation, cancellation settlement, and ordinary versus delegated forks:
 
@@ -35,3 +35,9 @@ DSHX_HARNESS=/absolute/path/to/deepseek-harness node --import tsx tools/check-ha
 ```
 
 The probe creates only an isolated in-memory registry and temporary Notch storage. It starts no model, provider process, second Host, or real user session. The real installed SkillHub workflow was separately observed without sending messages. External providers' actual CLI execution and their own approval UIs were not launched or certified. A third-party plugin that bypasses both official session metadata and the owned-job interface cannot be reliably attributed from its title alone.
+
+## Browser heartbeat stability
+
+A browser heartbeat previously acted as both a five-second running lease and an unread-state lease. Expiration switched loaded sessions back to a different unread calculation and removed cold completed sessions; the next heartbeat reversed that decision. A background or throttled page could therefore animate a completed lamp repeatedly without any new result.
+
+Unread decisions now survive heartbeat interruptions. Only running claims from an unloaded session expire. A retained completion remains openable, and a cached browser decision cannot suppress a turn that ended after that snapshot arrived. The regression checks repeat expiry/recovery, cold and loaded completions, stale running claims, and a newer completion arriving while an old browser snapshot is still fresh.
