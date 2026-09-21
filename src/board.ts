@@ -6,7 +6,7 @@ import type {
   AskUserQuestionAnswer,
   AskUserQuestionRequest,
 } from '@deepseek-ai/dsh-user-questions'
-import { foldSession, isChildSession } from './session-state.ts'
+import { conversationOwner, foldSession, isChildSession } from './session-state.ts'
 import { loadSeen, saveSeen } from './store.ts'
 import type {
   ApprovalOutcomeWire,
@@ -64,7 +64,7 @@ export class Board {
 
   private readonly pending = new Map<string, Held>()
   private readonly seen = loadSeen()
-  private readonly running = new Set<string>()
+  private running = new Set<string>()
   private readonly pendingUnread = new Set<string>()
   private readonly listeners = new Set<() => void>()
   private focus: NotchFocus | null = null
@@ -88,12 +88,35 @@ export class Board {
 
   snapshot(origin: string): NotchSnapshot {
     const rows: NotchRow[] = []
-    for (const session of this.ctx.sessions.list()) {
-      const row = this.rowFor(session)
+    const sessions = this.ctx.sessions.list()
+    const byId = new Map<string, Session>(sessions.map(session => [session.id, session]))
+    const groups = new Map<Session, Session[]>()
+    for (const session of sessions) {
+      const owner = conversationOwner(session, byId)
+      if (!owner) {
+        // Broken/unloaded lineage must not invent a task or lose a user question.
+        const ids = new Set([session.id])
+        const approval = this.heldApproval(ids)
+        const ask = this.heldAsk(ids)
+        if (approval || ask) rows.push({
+          id: session.id, title: this.titleOf(session), child: true,
+          busy: false, unread: false,
+          ...(approval ? { approval } : {}), ...(ask ? { ask } : {}),
+        })
+        continue
+      }
+      const members = groups.get(owner) ?? []
+      members.push(session)
+      groups.set(owner, members)
+    }
+    for (const [owner, members] of groups) {
+      const row = this.rowFor(owner, members)
       if (row) rows.push(row)
     }
     for (const source of this.sidebarRows() ?? []) {
-      if (rows.some(row => row.id === source.id) || (!source.completed && !source.running)) continue
+      // The Host owns loaded session classification. A stale mirror must not
+      // resurrect a filtered child as child:false or override a settled root.
+      if (byId.has(source.id) || (!source.completed && !source.running)) continue
       if (source.completed && this.seen[source.id] !== undefined) continue
       rows.push({ id: source.id, title: source.title, child: false, busy: source.running, unread: source.completed })
     }
@@ -102,7 +125,7 @@ export class Board {
       || Number(b.unread) - Number(a.unread)
       || (b.lastTurn?.at ?? 0) - (a.lastTurn?.at ?? 0))
     this.running = new Set(
-      this.ctx.sessions.list().filter((session) => this.isBusy(session)).map((session) => session.id),
+      sessions.filter((session) => this.isBusy(session)).map((session) => session.id),
     )
     return { ok: true, generatedAt: Date.now(), origin, rows, sidebarSyncedAt: this.sidebarRows() ? this.sidebar?.at : undefined }
   }
@@ -232,28 +255,31 @@ export class Board {
     return this.ctx.agents.get(session.id)?.status === 'running'
   }
 
-  private rowFor(session: Session): NotchRow | undefined {
+  private rowFor(session: Session, members: Session[]): NotchRow | undefined {
     const folded = foldSession(session)
     const child = isChildSession(session)
     const lastSeen = this.seen[session.id]
-    const busy = this.isBusy(session)
-    if (busy) {
+    const busy = members.some(member => this.isBusy(member))
+    // Completion belongs to the owner's turn, never an individual worker.
+    if (this.isBusy(session)) {
       this.pendingUnread.delete(session.id)
     } else if (this.running.has(session.id) && folded.lastTurn && !folded.lastTurn.failed) {
       this.pendingUnread.add(session.id)
     }
     const dismissed = lastSeen !== undefined && (folded.lastTurn === undefined || lastSeen >= folded.lastTurn.at)
     const mirror = this.sidebarRows()
-    const unread = dismissed
+    const unread = dismissed || busy
       ? false
       : mirror !== undefined
         ? mirror.some(row => row.id === session.id && row.completed)
         : this.pendingUnread.has(session.id)
           || (folded.lastTurn !== undefined && lastSeen !== undefined && folded.lastTurn.at > lastSeen)
-    const approval = this.heldApproval(session.id)
-    const ask = this.heldAsk(session.id)
+    const memberIds = new Set(members.map(member => member.id))
+    // Keep the original request id/resolver so answering the root's yellow
+    // lamp settles the correct child. Further child questions queue here.
+    const approval = this.heldApproval(memberIds)
+    const ask = this.heldAsk(memberIds)
     if (!busy && !unread && !approval && !ask) return undefined
-    if (child && !approval && !ask && !busy) return undefined
     const title = this.titleOf(session)
     const row: NotchRow = {
       id: session.id,
@@ -268,9 +294,9 @@ export class Board {
     return row
   }
 
-  private heldApproval(sessionId: string): NotchApproval | undefined {
+  private heldApproval(sessionIds: ReadonlySet<string>): NotchApproval | undefined {
     for (const held of this.pending.values()) {
-      if (held.kind === 'approval' && held.sessionId === sessionId) {
+      if (held.kind === 'approval' && sessionIds.has(held.sessionId)) {
         return {
           id: held.id,
           toolName: held.toolName,
@@ -281,9 +307,9 @@ export class Board {
     return undefined
   }
 
-  private heldAsk(sessionId: string): NotchAsk | undefined {
+  private heldAsk(sessionIds: ReadonlySet<string>): NotchAsk | undefined {
     for (const held of this.pending.values()) {
-      if (held.kind === 'ask' && held.sessionId === sessionId) {
+      if (held.kind === 'ask' && sessionIds.has(held.sessionId)) {
         return { id: held.id, questions: held.questions }
       }
     }

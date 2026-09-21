@@ -27,5 +27,19 @@ export function foldSession(session: Session): FoldedSession {
 }
 
 export function isChildSession(session: Session): boolean {
-  return session.header.parentSession !== undefined || session.header.origin === 'subagent'
+  // parentSession is also seed lineage for an independent user fork.
+  // Use the same presentation discriminator as Harness's workspace sidebar.
+  return session.header.origin === 'subagent'
+}
+
+/** Follow only delegation edges; user forks remain separate conversations. */
+export function conversationOwner(session: Session, sessions: ReadonlyMap<string, Session>): Session | undefined {
+  let current: Session | undefined = session
+  const visited = new Set<string>()
+  while (current && isChildSession(current)) {
+    if (visited.has(current.id)) return undefined
+    visited.add(current.id)
+    current = current.header.parentSession === undefined ? undefined : sessions.get(current.header.parentSession)
+  }
+  return current
 }

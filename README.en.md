@@ -86,6 +86,8 @@ Use existing sessions for these checks; a new model task is unnecessary. Seeing 
 
 The interface uses native AppKit, SwiftUI, and Canvas. Animation itself never calls a model. The panel grows with content, scrolls at the screen-height cap, and respects Reduced Motion.
 
+Counts represent user conversations. Workflow workers and nested subagents belong to their owning conversation; they do not add separate running, success, or failure indicators. A background worker keeps its owner running, while result indicators come from the owner's final outcome. Child questions appear on the owner's yellow indicator and answers return to the original requester, with multiple questions handled in order. User-created forks remain independent conversations.
+
 ## Troubleshooting
 
 | Symptom | Check |
