@@ -49,6 +49,8 @@ export interface NotchSnapshot {
   ok: true
   generatedAt: number
   sidebarSyncedAt?: number
+  /** Browser mirror generation observed in a recent heartbeat; absent for legacy clients. */
+  sidebarProjectionVersion?: number
   origin: string
   rows: NotchRow[]
 }

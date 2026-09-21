@@ -181,3 +181,38 @@ test('missing parents and malformed cycles do not inflate tasks or hang; questio
   await pending.promise
   assert.deepEqual(f.rows(), [])
 })
+
+test('Ralph-style sequential fresh workers never pulse extra running or result lamps', () => {
+  const f = fixture(), root = f.add('session-ralph-owner')
+  for (let round = 0; round < 5; round++) {
+    const child = f.child('round-' + round, root)
+    assert.deepEqual(f.rows().map(r => [r.id, r.busy, r.unread]), [[root.id, true, false]])
+    f.finish(child, round === 1 ? 'aborted' : 'completed')
+    f.sessions.splice(f.sessions.indexOf(child), 1)
+    assert.deepEqual(f.rows().map(r => [r.id, r.busy, r.unread]), [[root.id, true, false]])
+  }
+})
+
+test('resumed continuable child retains its owner regardless of load order and idle epochs', () => {
+  const f = fixture(), root = f.add('session-resume-owner', {}, false)
+  const child = f.child('resumed-child', root, false)
+  f.sessions.reverse()
+  assert.deepEqual(f.rows(), [])
+  for (let turn = 0; turn < 3; turn++) {
+    f.statuses.set(child.id, 'running')
+    assert.deepEqual(f.rows().map(r => r.id), [root.id])
+    f.finish(child)
+    assert.deepEqual(f.rows(), [])
+  }
+})
+
+test('cancelling a child question clears yellow on the owner without leaving a stale action', async () => {
+  const f = fixture(), root = f.add('session-cancel-owner'), child = f.child('cancel-child', root)
+  const pending = f.question(child, 'cancelled-question')
+  await Promise.resolve()
+  assert.equal(f.rows()[0].ask.questions[0].id, 'cancelled-question')
+  const settled = assert.rejects(pending.promise, /settled elsewhere/)
+  pending.controller.abort()
+  await settled
+  assert.deepEqual(f.rows().map(r => [r.id, r.busy, r.ask]), [[root.id, true, undefined]])
+})

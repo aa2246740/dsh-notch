@@ -88,6 +88,8 @@ The interface uses native AppKit, SwiftUI, and Canvas. Animation itself never ca
 
 Counts represent user conversations. Workflow workers and nested subagents belong to their owning conversation; they do not add separate running, success, or failure indicators. A background worker keeps its owner running, while result indicators come from the owner's final outcome. Child questions appear on the owner's yellow indicator and answers return to the original requester, with multiple questions handled in order. User-created forks remain independent conversations.
 
+External Codex, Claude Code, ACP, and DSH SDK children registered as official background jobs also keep their owner active. Observation never consumes job completion notices. The [dsh-notch-focus companion](companions/dsh-notch-focus/README.md) handles browser navigation and cold-session mirroring; existing installations can keep their current directory. See the [source compatibility audit](docs/subagent-compatibility.md) for entry paths, cancellation, resumption, and verification limits.
+
 ## Troubleshooting
 
 | Symptom | Check |

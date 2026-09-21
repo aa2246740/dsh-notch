@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session } from '@deepseek-ai/dsh-session'
+import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type {
   AskUserQuestionAnswer,
@@ -40,11 +41,11 @@ type Held = HeldApproval | HeldAsk
 
 interface SidebarRow { id: string; title: string; completed: boolean; running: boolean }
 export class Board {
-  private sidebar: { clientId: string; at: number; rows: SidebarRow[] } | undefined
+  private sidebar: { clientId: string; at: number; rows: SidebarRow[]; projectionVersion?: number } | undefined
 
   syncSidebar(input: unknown): boolean {
     if (!input || typeof input !== 'object') return false
-    const data = input as { clientId?: unknown; focused?: unknown; rows?: unknown }
+    const data = input as { clientId?: unknown; focused?: unknown; rows?: unknown; projectionVersion?: unknown }
     if (typeof data.clientId !== 'string' || !Array.isArray(data.rows) || data.rows.length > 1000) return false
     const rows: SidebarRow[] = []
     for (const row of data.rows) {
@@ -53,7 +54,8 @@ export class Board {
     }
     // A background browser cannot overwrite the last foreground page's state.
     if (this.sidebar && this.sidebar.clientId !== data.clientId && data.focused !== true && Date.now() - this.sidebar.at < 5000) return true
-    this.sidebar = { clientId: data.clientId, at: Date.now(), rows }
+    this.sidebar = { clientId: data.clientId, at: Date.now(), rows,
+      ...(data.projectionVersion === 2 ? { projectionVersion: 2 } : {}) }
     this.bump()
     return true
   }
@@ -127,7 +129,9 @@ export class Board {
     this.running = new Set(
       sessions.filter((session) => this.isBusy(session)).map((session) => session.id),
     )
-    return { ok: true, generatedAt: Date.now(), origin, rows, sidebarSyncedAt: this.sidebarRows() ? this.sidebar?.at : undefined }
+    return { ok: true, generatedAt: Date.now(), origin, rows,
+      sidebarSyncedAt: this.sidebarRows() ? this.sidebar?.at : undefined,
+      sidebarProjectionVersion: this.sidebarRows() ? this.sidebar?.projectionVersion : undefined }
   }
 
   markSeen(sessionId: string): void {
@@ -255,11 +259,23 @@ export class Board {
     return this.ctx.agents.get(session.id)?.status === 'running'
   }
 
+  private hasSubagentJob(session: Session): boolean {
+    const agent = this.ctx.agents.get(session.id)
+    if (!agent) return false
+    // Remote backends have no local Agent/Session. The official background
+    // job registry retains their owner through running and stopping, including
+    // jobs that were already active when Notch was hot-loaded.
+    const jobs = this.ctx.get('jobs') as Pick<JobRegistry, 'list'> | undefined
+    return jobs?.list(agent).some(job => job.ownerSession === session.id
+      && job.kind === 'subagent'
+      && (job.status === 'running' || job.status === 'stopping')) ?? false
+  }
+
   private rowFor(session: Session, members: Session[]): NotchRow | undefined {
     const folded = foldSession(session)
     const child = isChildSession(session)
     const lastSeen = this.seen[session.id]
-    const busy = members.some(member => this.isBusy(member))
+    const busy = members.some(member => this.isBusy(member) || this.hasSubagentJob(member))
     // Completion belongs to the owner's turn, never an individual worker.
     if (this.isBusy(session)) {
       this.pendingUnread.delete(session.id)

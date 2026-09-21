@@ -1,0 +1,5 @@
+id: dsh-notch-focus
+entry: src/dsh-notch-focus.ts
+marker: "[my-plugins/dsh-notch-focus] loaded"
+kind: client
+profile: web
