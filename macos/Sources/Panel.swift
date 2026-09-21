@@ -26,6 +26,10 @@ final class NotchPanel: NSPanel {
 
   func elasticMask(_ path: CGPath?) {
     CATransaction.begin(); CATransaction.setDisableActions(true)
+    contentView?.layer?.cornerRadius = path == nil ? 16 : 0
+    if #available(macOS 26.0, *), let surface = contentView as? NotchGlassSurface {
+      surface.glass.cornerRadius = path == nil ? 16 : 0
+    }
     if let path {
       let mask = CAShapeLayer(); mask.path = path
       contentView?.layer?.mask = mask

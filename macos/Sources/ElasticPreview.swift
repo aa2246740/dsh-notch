@@ -102,7 +102,7 @@ struct ElasticPreviewView: View {
       HStack {
         VStack(alignment: .leading, spacing: 6) {
           Text("给屏幕让点地方").font(.system(size: 26, weight: .semibold))
-          Text("抓住右侧 Notch 往左拉，松手收起。再把小凸起拉出来。").font(.system(size: 14)).foregroundStyle(.secondary)
+          Text("抓住 Notch 任意方向拖动，松手弹回边缘。再拉出来恢复。").font(.system(size: 14)).foregroundStyle(.secondary)
         }
         Spacer()
         Text("独立预览 · 不调用模型").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -120,7 +120,7 @@ struct ElasticPreviewView: View {
         Button("运行中") { choose(1) }
         Button("等待选择") { choose(2) }
         Spacer()
-        Text(dock.dragging ? "松手试试" : dock.hidden ? "已收纳 · 悬停探出，向左拖恢复" : "向左拖动收起")
+        Text(dock.dragging ? "松手回弹" : dock.hidden ? "已收纳 · 悬停探出，拖动恢复" : "任意方向拖动")
           .font(.system(size: 12)).foregroundStyle(.secondary)
         Button("恢复") { dock.setHidden(false) }.keyboardShortcut("r", modifiers: .command)
         Button("关闭预览") { NSApp.terminate(nil) }
