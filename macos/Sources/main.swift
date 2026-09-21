@@ -144,7 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func pointerOverVisual() -> Bool {
     guard let panel else { return false }
-    return panel.frame.contains(NSEvent.mouseLocation)
+    return dockController?.contains(NSEvent.mouseLocation) ?? panel.frame.contains(NSEvent.mouseLocation)
   }
 
   private func tickPointer() {

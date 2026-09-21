@@ -33,7 +33,10 @@ import SwiftUI
     let release = dock.pose
     dock.drag(inward:120,down:85,at:0.105); dock.end(at:0.105)
     check(dock.pose == release, "stationary mouse-up does not jump")
+    let forecast = dock.flightSamples(interval:1.0/240)
+    check(forecast.first == release && forecast.last == dock.targetPose, "compositor trajectory starts at release and ends at the exact cap")
     dock.advance(by:1.0/240)
+    check(dock.pose == forecast[1], "compositor trajectory uses the live spring solver and release velocity")
     check(dock.pose.inward > release.inward && dock.pose.down > release.down, "release retains both components of throw velocity")
     var rebound = false
     for _ in 0..<240 { dock.advance(by:1.0/120); rebound = rebound || dock.pose.down < -1 }
@@ -59,12 +62,14 @@ import SwiftUI
     }
     for (x,y) in [(0.0,0.0),(150,0),(0,120),(140,85),(130,-95),(-12,80)] {
       let g = EdgeDockGeometry(pose:EdgeDockPose(inward:x,down:y))
-      var starts = 0, closes = 0
+      var starts = 0, closes = 0, segments = 0
       g.path.forEach { element in
+        segments += 1
         if case .move = element { starts += 1 }
         if case .closeSubpath = element { closes += 1 }
       }
       check(starts == 1 && closes == 1, "one continuous shell, with no separate tail at \(x),\(y)")
+      check(segments <= 180, "contour upload stays bounded without over-sampling rounded corners")
       check(g.path.contains(CGPoint(x:g.body.midX,y:g.body.midY)), "held content stays inside the rubber")
       if x >= 0 {
         check([8.0,22,36].allSatisfy { g.path.contains(CGPoint(x:-0.25,y:$0)) }, "attachment retains the shell's full height")
@@ -95,6 +100,9 @@ import SwiftUI
     dock.updateRest(CGSize(width:38,height:112))
     check(dock.pose == beforeRetarget, "task updates retarget without jump")
     settle(dock); check(dock.pose.size == dock.restSize, "latest task height wins")
+    dock.begin(size:dock.restSize,at:7); dock.drag(inward:100,down:70,at:7.2); dock.end(at:7.2)
+    check(dock.flightSamples().allSatisfy { $0.size == dock.contentSize }, "a completed size transition cannot leak velocity into a later fixed-size throw")
+    settle(dock)
     dock.reduceMotionOverride = true; dock.setHidden(true)
     check(!dock.settling && dock.pose == .tucked(size:dock.contentSize), "reduced motion immediately reaches the original cap")
     dock.setHidden(false); check(!dock.engaged && dock.pose.size == dock.restSize, "reduced motion restore")
@@ -110,13 +118,41 @@ import SwiftUI
     let locked = panel.frame
     RunLoop.main.run(until:Date().addingTimeInterval(0.5))
     check(abs(panel.frame.width-locked.width)<0.1 && abs(panel.frame.height-locked.height)<0.1, "old native expansion cannot overwrite drag")
-    native.end(); settle(native)
+    native.end()
+    check(panel.frame == locked, "release uses the canvas reserved during dragging without a mouse-up resize")
+    let springFrame = panel.frame, sharedMask = panel.dockContourLayer
+    for _ in 0..<480 {
+      native.advance(by:1.0/120)
+      if native.settling {
+        check(panel.frame == springFrame, "native backing size stays fixed during the spring")
+        check(panel.dockContourLayer === sharedMask, "every spring frame reuses one native contour")
+        check(native.presentationBounds?.contains(native.geometry.bounds) == true, "reserved canvas contains the entire moving contour")
+        if let viewport = native.presentationBounds, let layer = host.layer, let root = panel.contentView?.layer {
+          let body = native.pose.body
+          let actual = layer.convert(layer.bounds,to:root)
+          let expected = CGRect(x:body.minX-viewport.minX,y:viewport.maxY-body.maxY,width:body.width,height:body.height)
+          check(abs(actual.minX-expected.minX)<0.01 && abs(actual.minY-expected.minY)<0.01 && abs(actual.width-expected.width)<0.01 && abs(actual.height-expected.height)<0.01,
+                "native content and contour use the same pose without per-frame SwiftUI layout")
+        }
+      }
+    }
     check(panel.frame.size == CGSize(width:8,height:native.contentSize.height), "native hidden hit rectangle matches the exposed original slice")
     check(panel.contentView?.layer?.cornerRadius == 0, "native material does not reclip the original contour")
     if #available(macOS 26.0, *), let surface = panel.contentView as? NotchGlassSurface {
       check(surface.glass.cornerRadius == 0, "glass clipping also yields to the original contour")
     }
     native.stop(); panel.close()
+
+    let betweenFrames = make()
+    betweenFrames.setHidden(true); betweenFrames.advance(by:0.10)
+    let displayed = EdgeDockPose(inward:-9,down:3,conceal:0.45)
+    betweenFrames.presentedPose = { displayed }
+    betweenFrames.begin(size:betweenFrames.restSize,at:12)
+    check(betweenFrames.pose == displayed, "interrupt reads the compositor pose instead of the last callback pose")
+    betweenFrames.drag(inward:8,down:-4,at:12.1)
+    check(betweenFrames.pose.inward == displayed.inward+8 && betweenFrames.pose.down == displayed.down-4,
+          "regrab preserves the pointer offset from the visible moving shell")
+    betweenFrames.stop()
 
     let folder = ProcessInfo.processInfo.environment["NOTCH_EDGE_OUTPUT"] ?? NSTemporaryDirectory()
     try! FileManager.default.createDirectory(atPath:folder,withIntermediateDirectories:true)

@@ -21,6 +21,8 @@ final class ElasticPreviewDelegate: NSObject, NSApplicationDelegate, NSWindowDel
       actions.addItem(withTitle: title, action: selector, keyEquivalent: key).target = self
     }
     actions.addItem(.separator())
+    actions.addItem(withTitle:"记录下一次回弹帧", action:#selector(traceNextSpring), keyEquivalent:"t").target = self
+    actions.addItem(withTitle:"回放并测量收纳", action:#selector(replaySpring), keyEquivalent:"p").target = self
     actions.addItem(withTitle: "退出预览", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q").target = NSApp
     NSApp.mainMenu = menu
     model.previewMode = true; model.maximumExpandedHeight = 320; model.connected = true
@@ -57,7 +59,7 @@ final class ElasticPreviewDelegate: NSObject, NSApplicationDelegate, NSWindowDel
     cursorTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
       Task { @MainActor in
         guard let self, let panel = self.panel else { return }
-        self.dock.hover(panel.frame.contains(NSEvent.mouseLocation))
+        self.dock.hover(self.controller?.contains(NSEvent.mouseLocation) ?? panel.frame.contains(NSEvent.mouseLocation))
       }
     }
     NSApplication.shared.activate(ignoringOtherApps: true)
@@ -68,6 +70,25 @@ final class ElasticPreviewDelegate: NSObject, NSApplicationDelegate, NSWindowDel
   @objc private func showQuestion() { choose(2) }
   @objc private func restore() { dock.setHidden(false) }
   @objc private func showControls() { window?.makeKeyAndOrderFront(nil) }
+  @objc private func traceNextSpring() { dock.diagnostics = EdgeDockDiagnostics() }
+  @objc private func replaySpring() {
+    choose(0); dock.setHidden(false,animated:false)
+    // Leave time for the menu/AX inspection to finish before measuring. Reading
+    // the accessibility tree during a spring can itself stall its main thread.
+    DispatchQueue.main.asyncAfter(deadline:.now()+3) { [weak self] in
+      guard let self else { return }
+      let began = CACurrentMediaTime()
+      self.dock.begin(size:self.dock.restSize,at:began)
+      for step in 1...18 {
+        DispatchQueue.main.asyncAfter(deadline:.now()+Double(step)/100) { [weak self] in
+          guard let self else { return }
+          let t = Double(step)/18
+          self.dock.drag(inward:140*t,down:88*t,at:began+Double(step)/100)
+          if step == 18 { self.dock.diagnostics = EdgeDockDiagnostics(); self.dock.end(at:began+0.18) }
+        }
+      }
+    }
+  }
 
   func choose(_ state: Int) {
     model.expanded = false
