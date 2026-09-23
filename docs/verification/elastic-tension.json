@@ -1,0 +1,59 @@
+{
+  "date": "2026-09-23",
+  "baselineCommit": "36476b7df0e0333d50caffac05c90b185f647c44",
+  "scope": "Independent offline preview; no model calls or production replacement.",
+  "interaction": {
+    "freeDragPt": 128,
+    "asymptoticDragLimitPt": 240,
+    "limitScope": "per gesture, relative to the currently grabbed presentation",
+    "minimumCrossSectionScale": 0.44,
+    "contentsScaled": false
+  },
+  "algorithmBenchmark": {
+    "checksum": 11375661.124222511,
+    "geometry4800Frames": {
+      "maxMs": 64.04845835641026,
+      "medianMs": 50.329541554674506,
+      "microsecondsPerUnit": 10.485321157223856,
+      "runsMs": [
+        44.830458238720894,
+        64.04845835641026,
+        58.664583368226886,
+        48.70574991218746,
+        50.329541554674506,
+        46.03920830413699,
+        51.87262501567602,
+        55.251500103622675,
+        49.07295829616487
+      ]
+    },
+    "solver240kSteps": {
+      "maxMs": 1.7863749526441097,
+      "medianMs": 1.5902500599622726,
+      "microsecondsPerUnit": 0.006626041916509469,
+      "runsMs": [
+        1.7863749526441097,
+        1.5902500599622726,
+        1.7777499742805958,
+        1.235166797414422,
+        1.239958219230175,
+        1.6297083348035812,
+        1.6515832394361496,
+        1.5842083375900984,
+        1.5505000483244658
+      ]
+    }
+  },
+  "measurementLimits": "CPU microbenchmark only; does not measure display FPS. New shape computation has additional cost. Preview UI was not instrumented for a frame-rate claim.",
+  "verification": {
+    "javascriptPassed": 59,
+    "edgeDock": "FAILURES=0",
+    "denseSamples": 122,
+    "submittedSamples": 90,
+    "maximumHeldTranslationErrorPt": 0.02479452620063487,
+    "nativeSnapshots": "32/80/140/220 pt horizontal, diagonal, up/down, hidden cap and 60 return frames inspected",
+    "nativeInteraction": "Long diagonal drag reached hidden state; later native state showed restored idle."
+  },
+  "previewBinarySHA256": "e93c9b8e77f560e4868ae3189c5e688281172a3aee562efd54c907aaae53649a",
+  "productionBinarySHA256Unchanged": "2cdfe64bf7b4872dad9db81a0fa08cffab3d61da6cffa7cf513477e2ab3e2896"
+}

@@ -60,6 +60,115 @@ struct EdgeDockPose: Equatable {
   }
 }
 
+/// Radial soft stop: identity near the hand, C2-continuous resistance after
+/// 128 pt, asymptotic 240 pt reach per gesture. No axis lock or hard stop.
+enum EdgeDockDragLimit {
+  static let freeDistance: CGFloat = 128
+  static let maximumDistance: CGFloat = 240
+  static func distance(_ raw: CGFloat) -> CGFloat {
+    guard raw > freeDistance else { return raw }
+    let room=maximumDistance-freeDistance
+    return freeDistance+room*tanh((raw-freeDistance)/room)
+  }
+  static func project(_ point: CGSize) -> CGSize {
+    let r=hypot(point.width,point.height)
+    guard r > freeDistance else { return point }
+    let scale=distance(r)/r
+    return CGSize(width:point.width*scale,height:point.height*scale)
+  }
+  static func velocity(_ velocity: CGSize, at point: CGSize) -> CGSize {
+    let r=hypot(point.width,point.height)
+    guard r > freeDistance else { return velocity }
+    let u=CGSize(width:point.width/r,height:point.height/r)
+    let t=tanh((r-freeDistance)/(maximumDistance-freeDistance))
+    let radial=1-t*t, tangential=distance(r)/r
+    let along=velocity.width*u.width+velocity.height*u.height
+    return CGSize(width:tangential*velocity.width+(radial-tangential)*along*u.width,
+                  height:tangential*velocity.height+(radial-tangential)*along*u.height)
+  }
+}
+
+/// A straight material axis with a smooth, positive cross-section scale.
+/// Holding both ends fixed keeps content intact; a positive scale preserves
+/// point order, so the rubber cannot fold over itself or split into a cable.
+struct EdgeDockTension {
+  let origin: CGPoint
+  let axis: CGVector
+  let normal: CGVector
+  let start: CGFloat
+  let span: CGFloat
+  let strength: CGFloat
+  var waistScale: CGFloat { 1-strength }
+  init(body: CGRect, anchorX: CGFloat) {
+    origin=CGPoint(x:anchorX,y:body.height/2)
+    let dx=body.midX-origin.x, dy=body.midY-origin.y, length=max(1e-9,hypot(dx,dy))
+    axis=CGVector(dx:dx/length,dy:dy/length)
+    normal=CGVector(dx:-axis.dy,dy:axis.dx)
+    start=abs(axis.dy)*body.height/2
+    let bodyExtent=abs(axis.dx)*body.width/2+abs(axis.dy)*body.height/2
+    span=max(0,length-bodyExtent-start)
+    strength=0.56*span*span/(span*span+75*75)
+  }
+  private func coordinate(_ p: CGPoint) -> CGFloat { (p.x-origin.x)*axis.dx+(p.y-origin.y)*axis.dy }
+  private func profile(_ p: CGPoint) -> (weight: CGFloat, derivative: CGFloat) {
+    guard span > 1e-6 else { return (0,0) }
+    let t=(coordinate(p)-start)/span
+    guard t > 0 && t < 1 else { return (0,0) }
+    return (16*t*t*(1-t)*(1-t),32*t*(1-t)*(1-2*t)/span)
+  }
+  func point(_ p: CGPoint) -> CGPoint {
+    let w=profile(p).weight, cross=(p.x-origin.x)*normal.dx+(p.y-origin.y)*normal.dy
+    return CGPoint(x:p.x-strength*w*cross*normal.dx,y:p.y-strength*w*cross*normal.dy)
+  }
+  private func tangent(_ p: CGPoint, _ v: CGVector) -> CGVector {
+    let f=profile(p), cross=(p.x-origin.x)*normal.dx+(p.y-origin.y)*normal.dy
+    let along=v.dx*axis.dx+v.dy*axis.dy, across=v.dx*normal.dx+v.dy*normal.dy
+    let delta = -strength*(f.derivative*along*cross+f.weight*across)
+    return CGVector(dx:v.dx+delta*normal.dx,dy:v.dy+delta*normal.dy)
+  }
+  func outline(_ hull: [CGPoint]) -> Path {
+    guard let first=hull.first else { return Path() }
+    guard span > 1e-4 && strength > 1e-6 else {
+      var p=Path(); p.addLines(hull); p.closeSubpath(); return p
+    }
+    var result=Path(); result.move(to:point(first))
+    func lerp(_ a: CGPoint, _ b: CGPoint, _ t: CGFloat) -> CGPoint {
+      CGPoint(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t)
+    }
+    // The mapped straight segment is a quintic. Fit tangent-preserving cubics
+    // adaptively instead of uploading hundreds of tiny polygon edges.
+    func append(_ a: CGPoint, _ b: CGPoint, depth: Int = 0) {
+      let mid=lerp(a,b,0.5), s=coordinate(mid)
+      if s <= start || s >= start+span { result.addLine(to:point(b)); return }
+      let v=CGVector(dx:b.x-a.x,dy:b.y-a.y), p=point(a), q=point(b)
+      let u=tangent(a,v), w=tangent(b,v)
+      let c=CGPoint(x:p.x+u.dx/3,y:p.y+u.dy/3), d=CGPoint(x:q.x-w.dx/3,y:q.y-w.dy/3)
+      var error: CGFloat = 0
+      for t: CGFloat in [0.25,0.5,0.75] {
+        let approx=lerp(lerp(lerp(p,c,t),lerp(c,d,t),t),lerp(lerp(c,d,t),lerp(d,q,t),t),t)
+        let exact=point(lerp(a,b,t))
+        error=max(error,hypot(exact.x-approx.x,exact.y-approx.y))
+      }
+      if error > 0.015 && depth < 8 {
+        append(a,mid,depth:depth+1); append(mid,b,depth:depth+1)
+      } else { result.addCurve(to:q,control1:c,control2:d) }
+    }
+    for i in hull.indices {
+      let a=hull[i], b=hull[(i+1)%hull.count], sa=coordinate(a), sb=coordinate(b)
+      var cuts: [CGFloat] = [0,1]
+      if abs(sb-sa) > 1e-9 {
+        for boundary in [start,start+span] {
+          let t=(boundary-sa)/(sb-sa)
+          if t > 1e-9 && t < 1-1e-9 { cuts.append(t) }
+        }
+      }
+      cuts.sort()
+      for j in 1..<cuts.count { append(lerp(a,b,cuts[j-1]),lerp(a,b,cuts[j])) }
+    }
+    result.closeSubpath(); return result
+  }
+}
+
 /// Exact state transition of x'' + 2*zeta*omega*x' + omega^2*x = 0.
 /// No integration substeps, frame-rate dependence or dt clamp.
 struct EdgeSpringTransition {
@@ -248,8 +357,9 @@ final class EdgeDockModel: NSObject, ObservableObject {
     // A mouse-up at the same point must not erase the release velocity.
     if hypot(moved.width, moved.height) > 0.01 {
       if dt > 0.0001 {
-        releaseVelocity = CGSize(width: min(2200, max(-2200, moved.width / CGFloat(dt))),
-                                 height: min(2200, max(-2200, moved.height / CGFloat(dt))))
+        let rawVelocity = CGSize(width:min(2200,max(-2200,moved.width/CGFloat(dt))),
+                                 height:min(2200,max(-2200,moved.height/CGFloat(dt))))
+        releaseVelocity = EdgeDockDragLimit.velocity(rawVelocity,at:CGSize(width:inward,height:down))
       }
       lastMotionTime = time
     }
@@ -259,9 +369,11 @@ final class EdgeDockModel: NSObject, ObservableObject {
       let reveal = min(1, max(0, hypot(inward, down) / 64))
       next.conceal = grabbed.conceal * (1 - reveal)
     }
-    // Translate the original shell, including when pulling its exposed slice out.
-    next.inward = grabbed.inward + inward
-    next.down = grabbed.down + down
+    // Limit this gesture's travel, not the hidden endpoint or original width.
+    // Starting at zero also preserves the exact visible grip on re-grab.
+    let travel=EdgeDockDragLimit.project(displacement)
+    next.inward = grabbed.inward + travel.width
+    next.down = grabbed.down + travel.height
     pose = next; onFrame?()
   }
 
@@ -382,7 +494,8 @@ struct EdgeDockGeometry {
     let translation=CGAffineTransform(translationX:body.minX,y:body.minY)
     let outline = abs(pose.down) < 0.0001 && pose.inward <= 0 ? original.applying(translation) : Self.stretchedHull(
       contour?.sorted ?? Self.sortedContour(original), offset:body.origin,
-      anchors:[CGPoint(x:anchorX,y:0),CGPoint(x:anchorX,y:pose.height)])
+      anchors:[CGPoint(x:anchorX,y:0),CGPoint(x:anchorX,y:pose.height)],
+      tension:EdgeDockTension(body:body,anchorX:anchorX))
     path = outline
     let raw = outline.boundingRect
     bounds = CGRect(x: min(-1, raw.minX), y: raw.minY,
@@ -435,7 +548,7 @@ struct EdgeDockGeometry {
     }
     return points.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
   }
-  private static func stretchedHull(_ local: [CGPoint], offset: CGPoint, anchors: [CGPoint]) -> Path {
+  private static func stretchedHull(_ local: [CGPoint], offset: CGPoint, anchors: [CGPoint], tension: EdgeDockTension) -> Path {
     var sorted=local.map { CGPoint(x:$0.x+offset.x,y:$0.y+offset.y) }
     // Translation preserves sort order; insert only the two moving anchors.
     for anchor in anchors {
@@ -454,10 +567,7 @@ struct EdgeDockGeometry {
       return Array(result.dropLast())
     }
     let hull = half(sorted) + half(Array(sorted.reversed()))
-    var path = Path()
-    path.addLines(hull)
-    path.closeSubpath()
-    return path
+    return tension.outline(hull)
   }
 }
 

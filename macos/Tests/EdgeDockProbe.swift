@@ -14,6 +14,55 @@ import SwiftUI
     func point(_ pose: EdgeDockPose, _ f: CGPoint) -> CGPoint {
       CGPoint(x: pose.body.minX + pose.width*f.x, y: pose.body.minY + pose.height*f.y)
     }
+    for distance in [0.0,12,64,128,160,240,500,10000] {
+      let raw=CGSize(width:distance*0.6,height:distance*0.8), p=EdgeDockDragLimit.project(raw)
+      check(hypot(p.width,p.height) <= 240+1e-9, "drag stays within the radial soft limit")
+      check(abs(p.width*0.8-p.height*0.6)<1e-9, "soft limit preserves diagonal direction")
+      if distance <= 128 { check(p == raw, "ordinary travel remains exactly one to one") }
+      let v=CGSize(width:80,height:-45), dt=1e-5
+      let q=EdgeDockDragLimit.project(CGSize(width:raw.width+v.width*dt,height:raw.height+v.height*dt))
+      let speed=EdgeDockDragLimit.velocity(v,at:raw)
+      check(abs((q.width-p.width)/dt-speed.width)<0.002 && abs((q.height-p.height)/dt-speed.height)<0.002,
+        "release speed is the derivative of the same resistance map")
+    }
+    let limit=EdgeDockDragLimit.self, h=1e-3
+    check(abs((limit.distance(128+h)-limit.distance(128))/h-1)<1e-7,
+      "resistance starts without a velocity corner")
+    check(limit.distance(240) < limit.distance(360) && limit.distance(360) < 240,
+      "the boundary progressively resists rather than stopping abruptly")
+    var lastWaist: CGFloat = 1
+    for length in [0.0,24,64,128,192,240] {
+      let body=EdgeDockPose(inward:length).body, t=EdgeDockTension(body:body,anchorX:0)
+      check(t.waistScale <= lastWaist && t.waistScale >= 0.44, "longer stretch gets thinner with a material thickness floor")
+      lastWaist=t.waistScale
+    }
+    for (x,y) in [(0.0,0.0),(150,0),(0,180),(160,100),(160,-100),(-12,180)] {
+      let pose=EdgeDockPose(inward:x,down:y), body=pose.body, anchor=max(0,body.maxX)
+      let t=EdgeDockTension(body:body,anchorX:anchor)
+      for p in [CGPoint(x:anchor,y:0),CGPoint(x:anchor,y:44),
+                CGPoint(x:body.minX,y:body.minY),CGPoint(x:body.maxX,y:body.minY),
+                CGPoint(x:body.minX,y:body.maxY),CGPoint(x:body.maxX,y:body.maxY),
+                CGPoint(x:body.midX,y:body.midY)] {
+        let q=t.point(p)
+        check(hypot(q.x-p.x,q.y-p.y)<1e-9, "attachment, original shell and content do not get squashed")
+      }
+      for step in 0...20 {
+        let s=t.start+t.span*Double(step)/20
+        let center=CGPoint(x:t.origin.x+t.axis.dx*s,y:t.origin.y+t.axis.dy*s)
+        let a=t.point(CGPoint(x:center.x-t.normal.dx*30,y:center.y-t.normal.dy*30))
+        let b=t.point(CGPoint(x:center.x+t.normal.dx*30,y:center.y+t.normal.dy*30))
+        check((b.x-a.x)*t.normal.dx+(b.y-a.y)*t.normal.dy >= 60*0.44-1e-9,
+          "the waist remains ordered and cannot fold over or pinch closed")
+      }
+    }
+    let far=make(); far.begin(size:far.restSize,at:0); far.drag(inward:800,down:600,at:0.2)
+    check(abs(hypot(far.pose.inward,far.pose.down)-240)<0.001, "very long native pointer travel remains bounded")
+    let farPose=far.pose
+    far.end(at:0.2); far.advance(by:0.12)
+    let catching=far.pose
+    far.begin(size:far.restSize,at:0.4); far.drag(inward:0,down:0,at:0.4)
+    check(far.pose == catching && catching != farPose, "regrabbing a resisted return has no pose jump")
+    far.stop()
     // Closed-form physics must describe the same trajectory at every cadence,
     // including missed callbacks, rather than slowing down when dt is clamped.
     for damping in [0.6,0.9,1.0,1.4] {
@@ -234,6 +283,7 @@ import SwiftUI
     }
     let originalSize = CGSize(width:38,height:44)
     for (name,pose) in [("hidden",EdgeDockPose.tucked(size:originalSize)),("peek",.tucked(size:originalSize,peeking:true)),("left",EdgeDockPose(inward:150)),("down",EdgeDockPose(down:120)),("diagonal",EdgeDockPose(inward:140,down:85)),("up",EdgeDockPose(inward:130,down:-95)),("original",EdgeDockPose())] { render(pose,name) }
+    for length in [32,80,140,220] { render(EdgeDockPose(inward:CGFloat(length)),"stretch-\(length)") }
     let movie = make()
     movie.begin(size:movie.restSize,at:0); movie.drag(inward:140,down:90,at:0.18); movie.end(at:0.18)
     var samples = [[String:Double]]()
