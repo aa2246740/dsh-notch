@@ -37,6 +37,14 @@ struct NotchLastTurn: Decodable {
   var failed: Bool
 }
 
+struct NotchAttentionKey: Hashable {
+  enum Kind: Hashable {
+    case approval(String), question(String), completed(Double?), failed(Double?)
+  }
+  let sessionID: String
+  let kind: Kind
+}
+
 struct NotchRow: Decodable, Identifiable {
   var id: String
   var title: String
@@ -50,6 +58,14 @@ struct NotchRow: Decodable, Identifiable {
   var needsAction: Bool { approval != nil || ask != nil }
   /// A red lamp is a finished unsuccessful turn, never a session that is still running.
   var isFailedResult: Bool { lastTurn?.failed == true && !busy && !needsAction }
+
+  var attentionKey: NotchAttentionKey? {
+    if let approval { return NotchAttentionKey(sessionID:id,kind:.approval(approval.id)) }
+    if let ask { return NotchAttentionKey(sessionID:id,kind:.question(ask.id)) }
+    if isFailedResult { return NotchAttentionKey(sessionID:id,kind:.failed(lastTurn?.at)) }
+    if unread && !busy { return NotchAttentionKey(sessionID:id,kind:.completed(lastTurn?.at)) }
+    return nil
+  }
 }
 
 struct NotchSnapshot: Decodable {

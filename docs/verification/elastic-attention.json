@@ -1,0 +1,44 @@
+{
+  "date": "2026-09-23",
+  "scope": "Native hidden-edge positioning and attention reveal",
+  "before": {
+    "reproducedFailure": "screen reposition keeps a hidden cap exactly attached to the requested edge",
+    "failureCount": 1,
+    "screenshotTriggerRecorded": false
+  },
+  "after": {
+    "edgeDockFailures": 0,
+    "geometryFailures": 0,
+    "releaseBuild": "passed",
+    "sourceAndPreviewBinarySha256": "8097b553d74250c969b8f16eb8c32f3998b02b48d810f5f1811bd883c3b9bbbb",
+    "nativeRegressionCoverage": [
+      "hidden crop remains on an explicit physical screen anchor",
+      "right-side system Dock does not become the screen edge",
+      "ordinary running and size changes preserve hidden geometry",
+      "completion, failure, approval, and question reveal completely",
+      "repeated result and request snapshots respect manual hiding",
+      "new request identity wakes despite an unchanged count",
+      "stale snapshot does not wake",
+      "attention during drag waits for release",
+      "attention reverses tuck without a pose jump",
+      "Reduced Motion reaches final state immediately",
+      "hidden question restores compact view before expanding details"
+    ],
+    "nativePreviewObserved": [
+      "running update stays hidden",
+      "completion restores normal view",
+      "same completion after re-hide stays hidden",
+      "failure restores normal view",
+      "question restores normal view",
+      "same question after re-hide stays hidden",
+      "hidden cap touches preview edge"
+    ]
+  },
+  "modelRequests": 0,
+  "realTaskAnswers": 0,
+  "limitations": [
+    "Preview uses the release binary with local snapshots and a virtual screen edge.",
+    "These results do not alone establish installation or production UI acceptance.",
+    "No new measured display-frame-rate claim."
+  ]
+}

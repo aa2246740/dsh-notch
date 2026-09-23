@@ -326,6 +326,7 @@ final class EdgeDockModel: NSObject, ObservableObject {
   private var lastMotionTime = 0.0
   private var releaseVelocity = CGSize.zero
   private var displacement = CGSize.zero
+  private var attentionAfterDrag = false
   private var springs: [EdgeSpring] = []
   private var target = EdgeDockPose()
   private var displayLink: CADisplayLink?
@@ -394,15 +395,26 @@ final class EdgeDockModel: NSObject, ObservableObject {
     let distance = hypot(displacement.width, displacement.height)
     let projection = hypot(displacement.width + releaseVelocity.width * 0.045, displacement.height + releaseVelocity.height * 0.045)
     let commits = distance > 24 || (distance > 10 && projection > 40)
-    setHidden(commits ? !beganHidden : beganHidden, velocity: releaseVelocity)
+    let nextHidden = attentionAfterDrag ? false : (commits ? !beganHidden : beganHidden)
+    attentionAfterDrag = false
+    setHidden(nextHidden, velocity: releaseVelocity)
   }
   func cancel() {
     guard dragging || settling else { return }
-    dragging = false; setHidden(beganHidden)
+    dragging = false
+    let nextHidden = attentionAfterDrag ? false : beganHidden
+    attentionAfterDrag = false
+    setHidden(nextHidden)
+  }
+  func revealForAttention() {
+    // Never take the object out of the user's hand. A new event during a drag
+    // changes the release destination, keeping its position and velocity.
+    if dragging { attentionAfterDrag = true; return }
+    if hidden { setHidden(false) }
   }
   func setHidden(_ value: Bool, velocity: CGSize? = nil, animated: Bool = true) {
     if !engaged { pose = shownPose; contentSize = restSize }
-    engaged = true; hidden = value; dragging = false
+    engaged = true; hidden = value; dragging = false; attentionAfterDrag = false
     onHidden?(value)
     animate(to: value ? tuckedPose : shownPose, velocity: velocity, animated: animated)
   }
@@ -666,6 +678,7 @@ final class EdgeDockController: NSObject {
   private var compositorTimeline: [EdgeDockSample] = []
   private let contourCache = EdgeDockContourCache()
   private var compositorBegan = 0.0
+  private var attentionSubscription: AnyCancellable?
   var onBegin: (() -> Void)?
 
   init(dock: EdgeDockModel, panel: NotchPanel, hosting: NSView) {
@@ -709,11 +722,27 @@ final class EdgeDockController: NSObject {
     default: break
     }
   }
-  func resetAnchor() {
+  private func resetAnchor() {
     guard let panel else { return }
     let b = dock.presentationBounds ?? dock.geometry.bounds
     origin = dock.engaged ? NSPoint(x: panel.frame.minX - b.minX, y: panel.frame.maxY + b.minY)
                           : NSPoint(x: panel.frame.maxX, y: panel.frame.maxY)
+  }
+  func pin(to point: NSPoint) {
+    guard let panel else { return }
+    let delta=CGSize(width:point.x-origin.x,height:point.y-origin.y)
+    panel.cancelResize()
+    origin=point
+    if dock.settling && !compositorTimeline.isEmpty {
+      // Translate the whole reserved canvas without retiming an active flight.
+      panel.setFrameOrigin(NSPoint(x:panel.frame.minX+delta.width,y:panel.frame.minY+delta.height))
+    } else { render() }
+  }
+  func observeAttention(in model: BoardModel) {
+    // BoardModel emits on MainActor after applying the snapshot. Deliver in
+    // that same turn, so a queued notification cannot undo a later user hide.
+    attentionSubscription=model.$attentionRevision.dropFirst().removeDuplicates()
+      .sink { [weak self] _ in self?.dock.revealForAttention() }
   }
   func contains(_ point: NSPoint) -> Bool {
     guard let panel else { return false }

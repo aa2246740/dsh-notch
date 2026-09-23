@@ -372,4 +372,9 @@ struct NotchScreenLayout {
     edgeInset = min(preferredInset, max(0, (height - 1) / 2))
     maximumHeight = height - 2 * edgeInset
   }
+  func anchor(screen: CGRect, visible: CGRect) -> NSPoint {
+    // A right-side macOS Dock changes visibleFrame.maxX. The Notch belongs
+    // to the physical display edge, not that temporary work-area boundary.
+    NSPoint(x:screen.maxX,y:visible.maxY-edgeInset)
+  }
 }

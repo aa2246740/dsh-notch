@@ -73,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     self.hosting = hosting
     pinToScreen()
     dockController = EdgeDockController(dock: dock, panel: panel, hosting: hosting)
+    dockController?.observeAttention(in:model)
     dockController?.onBegin = { [weak self] in
       self?.foldWork?.cancel(); self?.foldWork = nil
       self?.model.isPillHovered = false
@@ -131,15 +132,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let demoInset: CGFloat = ProcessInfo.processInfo.environment["DSH_NOTCH_RUNTIME_FILE"] == nil ? 0 : 360
     let width = max(1, model.currentIslandWidth)
     let height = min(max(1, model.currentIslandHeight), model.maximumExpandedHeight)
-    let frame = NSRect(
-      x: visible.maxX - demoInset - width,
-      y: visible.maxY - layout.edgeInset - height,
-      width: width,
-      height: height
-    )
-    panel.setFrame(frame, display: true)
-    dockController?.resetAnchor()
-    if dock.hidden { dock.setHidden(true, animated: false) }
+    var anchor=layout.anchor(screen:screen.frame,visible:visible)
+    anchor.x -= demoInset
+    if let dockController {
+      // Keep the hidden crop/flight intact; never resize to the full body and
+      // then infer a screen anchor from the old crop's coordinate system.
+      dockController.pin(to:anchor)
+      dockController.updateRest(CGSize(width:width,height:height))
+    } else {
+      panel.setFrame(NSRect(x:anchor.x-width,y:anchor.y-height,width:width,height:height),display:true)
+    }
   }
 
   private func pointerOverVisual() -> Bool {

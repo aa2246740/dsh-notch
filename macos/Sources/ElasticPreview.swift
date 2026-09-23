@@ -25,6 +25,8 @@ final class ElasticPreviewDelegate: NSObject, NSApplicationDelegate, NSWindowDel
                                  ("观察长拉", "6", #selector(inspectLongPull))] {
       actions.addItem(withTitle:title,action:selector,keyEquivalent:key).target = self
     }
+    actions.addItem(withTitle:"本地任务完成",action:#selector(showCompleted),keyEquivalent:"7").target = self
+    actions.addItem(withTitle:"本地任务失败",action:#selector(showFailed),keyEquivalent:"8").target = self
     actions.addItem(.separator())
     actions.addItem(withTitle:"记录下一次回弹帧", action:#selector(traceNextSpring), keyEquivalent:"t").target = self
     actions.addItem(withTitle:"回放并测量收纳", action:#selector(replaySpring), keyEquivalent:"p").target = self
@@ -51,6 +53,7 @@ final class ElasticPreviewDelegate: NSObject, NSApplicationDelegate, NSWindowDel
     locate()
     let controller = EdgeDockController(dock: dock, panel: panel, hosting: host)
     self.controller = controller
+    controller.observeAttention(in:model)
     controller.onBegin = { [weak self] in self?.model.isPillHovered = false }
     dock.onHidden = { [weak self] hidden in self?.model.visuallyDocked = hidden }
     dock.onSettled = { [weak self] hidden in if hidden { self?.model.expanded = false } }
@@ -85,6 +88,8 @@ final class ElasticPreviewDelegate: NSObject, NSApplicationDelegate, NSWindowDel
   @objc private func showIdle() { choose(0) }
   @objc private func showBusy() { choose(1) }
   @objc private func showQuestion() { choose(2) }
+  @objc private func showCompleted() { choose(3) }
+  @objc private func showFailed() { choose(4) }
   @objc private func restore() { dock.setHidden(false) }
   @objc private func showControls() { window?.makeKeyAndOrderFront(nil) }
   @objc private func traceNextSpring() { dock.diagnostics = EdgeDockDiagnostics() }
@@ -112,6 +117,10 @@ final class ElasticPreviewDelegate: NSObject, NSApplicationDelegate, NSWindowDel
     let rows: [NotchRow]
     if state == 0 { rows = [] }
     else if state == 1 { rows = [NotchRow(id: "elastic-offline", title: "本地预览任务", child: false, busy: true, unread: false)] }
+    else if state == 3 || state == 4 {
+      rows = [NotchRow(id:"elastic-offline",title:state == 3 ? "本地完成" : "本地失败",child:false,busy:false,unread:true,
+        lastTurn:NotchLastTurn(at:1,kind:state == 3 ? "complete":"error",failed:state == 4))]
+    }
     else {
       let wire: [String: Any] = ["id":"elastic-offline", "title":"本地选择", "child":false, "busy":true, "unread":false,
         "ask":["id":"elastic-ask", "questions":[["id":"elastic-q", "question":"今晚想看什么？", "options":[["label":"看星星", "description":"本地测试，不会发给 DSH。"],["label":"看月亮"]]]]]]
@@ -123,8 +132,9 @@ final class ElasticPreviewDelegate: NSObject, NSApplicationDelegate, NSWindowDel
   private func locate() {
     guard let window, let panel else { return }
     let top = window.frame.maxY - 175
-    panel.setFrameOrigin(NSPoint(x: window.frame.maxX - 54 - panel.frame.width, y: top - panel.frame.height))
-    controller?.resetAnchor()
+    let anchor=NSPoint(x:window.frame.maxX-54,y:top)
+    if let controller { controller.pin(to:anchor) }
+    else { panel.setFrameOrigin(NSPoint(x:anchor.x-panel.frame.width,y:anchor.y-panel.frame.height)) }
   }
   func windowDidMove(_ notification: Notification) { locate() }
   func windowWillClose(_ notification: Notification) { dock.stop(); panel?.close(); NSApplication.shared.terminate(nil) }

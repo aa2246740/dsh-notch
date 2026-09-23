@@ -92,6 +92,10 @@ Notch 会跟随 `runtime.json` 中的 Host 进程：收到进程退出通知后�
 | 点击问题选项 | 直接提交该选项；多选或多题按面板提示完成 |
 | 点击问题标题 | 回到 DSH 查看完整上下文 |
 | 全部结果读完 | 回到机器人待机 |
+| 拖动 Notch 后松手 | 弹性收纳到屏幕边缘；再拖出即可恢复 |
+| 隐藏时出现新完成、错误或待审批问题 | 自动弹回正常紧凑状态；同一提醒不会因轮询反复弹出 |
+
+隐藏状态下，普通运行和尺寸更新不打扰你。鼠标正在拖动时收到新提醒，会先保持跟手，等松手再恢复。右侧系统 Dock 或显示工作区变化不会改变 Notch 对物理屏幕边缘的定位。
 
 Notch 使用原生 AppKit / SwiftUI / Canvas 渲染。动画本身不调用模型。窗口随内容展开，达到屏幕高度上限后滚动；系统开启“减少动态效果”时呈现静态状态。
 
@@ -135,7 +139,7 @@ npm run test:idle
 npm run build:macos
 ```
 
-弹性收纳候选交互可在 [独立原生预览](tools/elastic-preview/README.md) 中试用；运行 `npm run build:elastic-preview` 构建，不连接 DSH、不调用模型，也不替换当前安装。
+弹性收纳交互可在 [独立原生预览](tools/elastic-preview/README.md) 中试用；运行 `npm run build:elastic-preview` 构建，不连接 DSH、不调用模型，也不替换当前安装。
 
 ### 录屏 Demo（可选）
 

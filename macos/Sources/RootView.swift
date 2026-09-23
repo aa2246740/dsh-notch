@@ -94,6 +94,8 @@ final class BoardModel: ObservableObject {
   @Published var currentIslandHeight: CGFloat = 90
   @Published var isPillHovered: Bool = false
   @Published var visuallyDocked = false
+  @Published private(set) var attentionRevision = 0
+  private var attentionKeys = Set<NotchAttentionKey>()
 
   @Published var orbitLayout = OrbitLayout()
   var retainedBusyCount = 0
@@ -261,6 +263,12 @@ final class BoardModel: ObservableObject {
   func applySnapshot(_ snap: NotchSnapshot) {
     guard snap.generatedAt >= latestSnapshotAt else { return }
     latestSnapshotAt = snap.generatedAt
+    let nextAttention=Set(snap.rows.compactMap(\.attentionKey))
+    let hasNewAttention = !nextAttention.isSubset(of:attentionKeys)
+    attentionKeys=nextAttention
+    // Publish only after the accepted snapshot is applied. Repeated polls of
+    // a result the user has hidden must not repeatedly pull the Notch out.
+    defer { if hasNewAttention { attentionRevision += 1 } }
     let coldSnapshot = !initialized
     let beforeBusy = busyCount
     let beforeSuccess = completedUnreadCount
@@ -292,7 +300,8 @@ final class BoardModel: ObservableObject {
       pendingFlights.removeAll { $0.decision }
       if wasAwaitingAction { expanded = false }
     }
-    if !previewMode && needsAction && (!wasAwaitingAction || previousAskId != activeActionRow?.ask?.id) {
+    if visuallyDocked { expandAfterDecision = false; expanded = false }
+    if !previewMode && !visuallyDocked && needsAction && (!wasAwaitingAction || previousAskId != activeActionRow?.ask?.id) {
       if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && (introducedDecision || statusFlight?.decision == true || pendingFlights.contains(where: { $0.decision })) {
         expandAfterDecision = true
       } else { expanded = true }

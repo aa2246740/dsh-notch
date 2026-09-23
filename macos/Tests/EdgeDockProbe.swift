@@ -275,6 +275,94 @@ import SwiftUI
     if #available(macOS 26.0, *), let surface = panel.contentView as? NotchGlassSurface {
       check(surface.glass.cornerRadius == 0, "glass clipping also yields to the original contour")
     }
+    // Re-pin directly in screen coordinates, preserving the hidden crop.
+    let requestedAnchor=CGPoint(x:-9500,y:-9000)
+    let hiddenPose=native.pose
+    controller.pin(to:requestedAnchor)
+    check(abs(panel.frame.maxX-requestedAnchor.x)<0.01 && abs(panel.frame.maxY-requestedAnchor.y)<0.01,
+          "screen reposition keeps a hidden cap exactly attached to the requested edge")
+    check(native.pose == hiddenPose, "re-pinning does not reinterpret the hidden crop as a full-size body")
+    let screen=CGRect(x:100,y:0,width:1200,height:900)
+    for reserved in [0.0,60,120] {
+      let visible=CGRect(x:100,y:0,width:1200-reserved,height:876)
+      let anchor=NotchScreenLayout(availableHeight:visible.height).anchor(screen:screen,visible:visible)
+      check(anchor.x == screen.maxX && anchor.y == visible.maxY-100,
+            "right-side macOS Dock never becomes the Notch screen edge")
+    }
+
+    let attentionModel=BoardModel(); attentionModel.previewMode=true
+    controller.observeAttention(in:attentionModel)
+    native.onHidden = { attentionModel.visuallyDocked = $0 }
+    native.setHidden(true,animated:false)
+    var snapshotTime=1000.0
+    func snapshot(_ rows:[NotchRow]) {
+      snapshotTime += 1
+      attentionModel.applySnapshot(NotchSnapshot(ok:true,generatedAt:snapshotTime,origin:"offline",rows:rows))
+      RunLoop.main.run(until:Date().addingTimeInterval(0.01))
+    }
+    let busy=NotchRow(id:"attention",title:"Local",child:false,busy:true,unread:false)
+    let done=NotchRow(id:"attention",title:"Local",child:false,busy:false,unread:true,
+      lastTurn:NotchLastTurn(at:1,kind:"complete",failed:false))
+    let failed=NotchRow(id:"attention",title:"Local",child:false,busy:false,unread:true,
+      lastTurn:NotchLastTurn(at:2,kind:"error",failed:true))
+    let approval=NotchRow(id:"attention",title:"Local",child:false,busy:true,unread:false,
+      approval:NotchApproval(id:"approve-1",toolName:"local-test"))
+    let question=NotchRow(id:"attention",title:"Local",child:false,busy:true,unread:false,
+      ask:NotchAsk(id:"ask-1",questions:[]))
+    let concealedQuestion=BoardModel()
+    concealedQuestion.visuallyDocked=true
+    concealedQuestion.applySnapshot(NotchSnapshot(ok:true,generatedAt:1,origin:"offline",rows:[question]))
+    check(!concealedQuestion.expanded, "a hidden decision reveals its compact indicator before any question panel")
+    let quietFrame=panel.frame
+    snapshot([busy])
+    for size in [CGSize(width:38,height:44),CGSize(width:42,height:100),CGSize(width:420,height:240)] {
+      controller.updateRest(size)
+      check(native.hidden && native.pose == hiddenPose && panel.frame == quietFrame,
+            "ordinary task and size updates leave the hidden cap attached and unchanged")
+    }
+    snapshot([])
+    check(native.hidden, "clearing a running task without an unread result does not wake the Notch")
+    for (name,row) in [("completion",done),("error",failed),("approval",approval),("question",question)] {
+      native.setHidden(true,animated:false)
+      let before=native.pose
+      snapshot([row])
+      check(!native.hidden && native.settling && native.pose == before,
+            "new \(name) starts a continuous complete reveal from the hidden pose")
+      controller.updateRest(CGSize(width:38,height:44))
+      settle(native)
+      check(!native.engaged && native.pose == EdgeDockPose() && abs(panel.frame.maxX-requestedAnchor.x)<0.01,
+            "\(name) settles at the complete original edge position")
+      native.setHidden(true,animated:false)
+      snapshot([row]); snapshot([row])
+      check(native.hidden && !native.settling, "repeated \(name) polls respect manual re-hiding")
+    }
+    var secondQuestion=question; secondQuestion.ask?.id="ask-2"
+    snapshot([secondQuestion]); settle(native)
+    check(!native.hidden, "a new request with the same session and count still attracts attention")
+    native.setHidden(true,animated:false)
+    let revision=attentionModel.attentionRevision
+    attentionModel.applySnapshot(NotchSnapshot(ok:true,generatedAt:snapshotTime-20,origin:"offline",rows:[failed]))
+    RunLoop.main.run(until:Date().addingTimeInterval(0.01))
+    check(native.hidden && attentionModel.attentionRevision == revision, "stale snapshots cannot wake a hidden Notch")
+    snapshot([])
+    native.begin(size:native.pose.size,at:20); native.drag(inward:70,down:35,at:20.1)
+    let attentionHeldPose=native.pose
+    snapshot([done])
+    check(native.dragging && native.pose == attentionHeldPose, "attention does not steal a drag or move the held point")
+    native.end(at:20.1); settle(native)
+    check(!native.hidden && !native.engaged, "attention during a drag reveals after release")
+    snapshot([])
+    native.setHidden(true); native.advance(by:0.06)
+    let retracting=native.pose
+    snapshot([failed])
+    check(!native.hidden && native.pose == retracting, "attention reverses an active tuck without a pose jump")
+    settle(native)
+    check(abs(panel.frame.maxX-requestedAnchor.x)<0.01, "interrupted tuck finishes on the real edge")
+    native.reduceMotionOverride=true
+    native.setHidden(true,animated:false)
+    snapshot([approval])
+    check(!native.hidden && !native.engaged && !native.settling,
+          "reduced motion reveals directly at the final pose: hidden=\(native.hidden) engaged=\(native.engaged) settling=\(native.settling) revision=\(attentionModel.attentionRevision)")
     native.stop(); panel.close()
 
     let betweenFrames = make()

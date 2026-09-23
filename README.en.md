@@ -83,6 +83,10 @@ Use existing sessions for these checks; a new model task is unnecessary. Seeing 
 | Click an option | Submit that choice; follow the panel for multiple questions or selections |
 | Click the question title | Open the full conversation in DSH |
 | Read all results | Return to the idle robot |
+| Drag and release Notch | Hide it elastically at the screen edge; drag it out again to restore |
+| New completion, failure, or decision while hidden | Bounce back to the normal compact view; repeated polls of the same event do not reveal it again |
+
+Ordinary running-state and size updates keep a hidden Notch tucked away. An attention event received during a drag waits until release. Screen work-area changes, including a right-side macOS Dock, do not move the hidden cap away from the physical display edge.
 
 The interface uses native AppKit, SwiftUI, and Canvas. Animation itself never calls a model. The panel grows with content, scrolls at the screen-height cap, and respects Reduced Motion.
 
@@ -121,7 +125,7 @@ npm run test:idle
 npm run build:macos
 ```
 
-Try the candidate elastic edge-hiding gesture in the [standalone native preview](tools/elastic-preview/README.md), built with `npm run build:elastic-preview`. It uses local fixtures, makes no model requests, and does not replace an installed Notch.
+Try the elastic edge-hiding gesture in the [standalone native preview](tools/elastic-preview/README.md), built with `npm run build:elastic-preview`. It uses local fixtures, makes no model requests, and does not replace an installed Notch.
 
 ### Optional recording demo
 
