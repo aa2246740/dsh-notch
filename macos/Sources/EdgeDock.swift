@@ -89,8 +89,8 @@ enum EdgeDockDragLimit {
 }
 
 /// A straight material axis with a smooth, positive cross-section scale.
-/// Holding both ends fixed keeps content intact; a positive scale preserves
-/// point order, so the rubber cannot fold over itself or split into a cable.
+/// The fixed end retains its thickness; contraction increases toward the
+/// grabbed end, including its contents. A positive scale preserves point order.
 struct EdgeDockTension {
   let origin: CGPoint
   let axis: CGVector
@@ -98,7 +98,15 @@ struct EdgeDockTension {
   let start: CGFloat
   let span: CGFloat
   let strength: CGFloat
-  var waistScale: CGFloat { 1-strength }
+  var tipScale: CGFloat { 1-strength }
+  /// Linear part of the grabbed body's deformation in native (y-up) space.
+  /// Apply around the body center to content and its clip; the panel compensates
+  /// for the backing layer's actual anchor without changing AppKit geometry.
+  var nativeBodyDeformation: CGAffineTransform {
+    CGAffineTransform(a:1-strength*normal.dx*normal.dx,
+      b:strength*normal.dx*normal.dy,c:strength*normal.dx*normal.dy,
+      d:1-strength*normal.dy*normal.dy,tx:0,ty:0)
+  }
   init(body: CGRect, anchorX: CGFloat) {
     origin=CGPoint(x:anchorX,y:body.height/2)
     let dx=body.midX-origin.x, dy=body.midY-origin.y, length=max(1e-9,hypot(dx,dy))
@@ -113,8 +121,10 @@ struct EdgeDockTension {
   private func profile(_ p: CGPoint) -> (weight: CGFloat, derivative: CGFloat) {
     guard span > 1e-6 else { return (0,0) }
     let t=(coordinate(p)-start)/span
-    guard t > 0 && t < 1 else { return (0,0) }
-    return (16*t*t*(1-t)*(1-t),32*t*(1-t)*(1-2*t)/span)
+    guard t > 0 else { return (0,0) }
+    guard t < 1 else { return (1,0) }
+    // Monotonic C2 smoothstep: never widen back into a rigid, full-size head.
+    return (t*t*t*(10+t*(-15+6*t)),30*t*t*(1-t)*(1-t)/span)
   }
   func point(_ p: CGPoint) -> CGPoint {
     let w=profile(p).weight, cross=(p.x-origin.x)*normal.dx+(p.y-origin.y)*normal.dy
@@ -135,7 +145,7 @@ struct EdgeDockTension {
     func lerp(_ a: CGPoint, _ b: CGPoint, _ t: CGFloat) -> CGPoint {
       CGPoint(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t)
     }
-    // The mapped straight segment is a quintic. Fit tangent-preserving cubics
+    // Fit the smooth material mapping with tangent-preserving cubics
     // adaptively instead of uploading hundreds of tiny polygon edges.
     func append(_ a: CGPoint, _ b: CGPoint, depth: Int = 0) {
       let mid=lerp(a,b,0.5), s=coordinate(mid)
@@ -480,6 +490,7 @@ struct EdgeDockGeometry {
   let bounds: CGRect
   let path: Path
   let radius: CGFloat
+  let tension: EdgeDockTension
 
   init(pose: EdgeDockPose, cache: EdgeDockContourCache? = nil) {
     body = pose.body
@@ -488,6 +499,7 @@ struct EdgeDockGeometry {
     // Behind the screen the attachment translates with the shell, leaving an
     // exact crop of the original cap instead of manufacturing a new nub.
     let anchorX = max(0, body.maxX)
+    tension=EdgeDockTension(body:body,anchorX:anchorX)
     let freedCorner = radius * min(1, max(0, pose.inward) / 16)
     let contour=cache?.contour(size:pose.size,radius:radius,trailing:freedCorner)
     let original=contour?.path ?? Self.shell(in:CGRect(origin:.zero,size:pose.size),radius:radius,trailing:freedCorner)
@@ -495,7 +507,7 @@ struct EdgeDockGeometry {
     let outline = abs(pose.down) < 0.0001 && pose.inward <= 0 ? original.applying(translation) : Self.stretchedHull(
       contour?.sorted ?? Self.sortedContour(original), offset:body.origin,
       anchors:[CGPoint(x:anchorX,y:0),CGPoint(x:anchorX,y:pose.height)],
-      tension:EdgeDockTension(body:body,anchorX:anchorX))
+      tension:tension)
     path = outline
     let raw = outline.boundingRect
     bounds = CGRect(x: min(-1, raw.minX), y: raw.minY,
@@ -577,6 +589,7 @@ extension NotchElasticFrame {
     var flip = CGAffineTransform(a:1,b:0,c:0,d:-1,tx:0,ty:viewport.height)
     outline = g.path(in:viewport).cgPath.copy(using:&flip)!
     translation = CGPoint(x:g.body.minX-viewport.minX,y:viewport.maxY-g.body.maxY)
+    deformation = g.tension.nativeBodyDeformation
     let t = min(1,max(0,(pose.conceal-0.25)/0.60))
     opacity = Double(1-t*t*(3-2*t))
     let body = CGRect(origin:.zero,size:pose.size)
@@ -778,7 +791,8 @@ final class EdgeDockController: NSObject {
     panel.elasticMask(dock.engaged ? g.path(in:b).cgPath.copy(using:&flip) : nil)
     let contentFrame = dock.engaged ? CGRect(x:g.body.minX-b.minX,y:b.maxY-g.body.maxY,width:g.body.width,height:g.body.height) : nil
     panel.positionMotionContent(contentFrame,opacity:dock.engaged ? dock.contentOpacity : 1,
-                                trailingRadius:g.radius * min(1,max(0,dock.pose.inward)/16))
+                                trailingRadius:g.radius * min(1,max(0,dock.pose.inward)/16),
+                                deformation:dock.engaged ? g.tension.nativeBodyDeformation : .identity)
     flightRevision = dock.flightRevision
     if dock.settling && dock.automaticTicks && dock.pose.size == dock.targetPose.size {
       let samples = dock.flightTimeline()

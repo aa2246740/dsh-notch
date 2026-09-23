@@ -5,7 +5,16 @@ struct NotchElasticFrame {
   let outline: CGPath
   let bodyClip: CGPath
   let translation: CGPoint
+  let deformation: CGAffineTransform
   let opacity: Double
+  static func contentTransform(frame: CGRect, deformation d: CGAffineTransform, anchor: CGPoint) -> CGAffineTransform {
+    // AppKit owns the backing layer's anchor. Contract around the body center
+    // without changing that anchor or asking SwiftUI to lay the content out.
+    let center=CGPoint(x:(0.5-anchor.x)*frame.width,y:(0.5-anchor.y)*frame.height)
+    let mapped=center.applying(d)
+    return CGAffineTransform(a:d.a,b:d.b,c:d.c,d:d.d,
+      tx:frame.minX+center.x-mapped.x,ty:frame.minY+center.y-mapped.y)
+  }
 }
 
 enum NotchMaterial {
@@ -79,10 +88,11 @@ final class NotchPanel: NSPanel {
     }
     CATransaction.commit()
   }
-  func positionMotionContent(_ frame: CGRect?, opacity: Double, trailingRadius: CGFloat = 0) {
+  func positionMotionContent(_ frame: CGRect?, opacity: Double, trailingRadius: CGFloat = 0, deformation: CGAffineTransform = .identity) {
     guard let hosting = motionHosting else { return }
     if #available(macOS 26.0, *), let surface = contentView as? NotchGlassSurface {
       surface.motionContentFrame = frame
+      surface.motionContentDeformation = deformation
     }
     hosting.autoresizingMask = frame == nil ? [.width,.height] : []
     let next = frame ?? contentView?.bounds ?? .zero
@@ -91,7 +101,9 @@ final class NotchPanel: NSPanel {
     // NSHostingView.setFrameOrigin invalidates SwiftUI layout even when its
     // size stays constant. Composite the existing content in the same layer
     // transaction as the contour instead of laying it out at every position.
-    hosting.layer?.setAffineTransform(CGAffineTransform(translationX:next.minX,y:next.minY))
+    if let layer=hosting.layer {
+      layer.setAffineTransform(NotchElasticFrame.contentTransform(frame:next,deformation:deformation,anchor:layer.anchorPoint))
+    }
     hosting.layer?.opacity = Float(opacity)
     if frame != nil {
       let shape = CGRect(x:trailingRadius,y:0,width:next.width,height:next.height)
@@ -122,7 +134,11 @@ final class NotchPanel: NSPanel {
       layer.add(animation,forKey:"elastic-flight-\(key)")
     }
     animate(motionMask,"path",frames.map(\.outline))
-    animate(content,"transform",frames.map { NSValue(caTransform3D:CATransform3DMakeTranslation($0.translation.x,$0.translation.y,0)) })
+    animate(content,"transform",frames.map {
+      let frame=CGRect(origin:$0.translation,size:content.bounds.size)
+      let transform=NotchElasticFrame.contentTransform(frame:frame,deformation:$0.deformation,anchor:content.anchorPoint)
+      return NSValue(caTransform3D:CATransform3DMakeAffineTransform(transform))
+    })
     animate(content,"opacity",frames.map { NSNumber(value:$0.opacity) })
     animate(motionBodyMask,"path",frames.map(\.bodyClip))
   }
@@ -293,6 +309,7 @@ final class NotchGlassSurface: NSView {
   private let hosting: NSView
   private let radius: CGFloat = 16
   var motionContentFrame: CGRect?
+  var motionContentDeformation = CGAffineTransform.identity
   func setMotionActive(_ active: Bool) {
     if !active { glass.isHidden = false; return }
     // Rubber is opaque. Do not render a backdrop over the large reserved canvas.
@@ -332,7 +349,9 @@ final class NotchGlassSurface: NSView {
     content.frame = bounds
     let frame = motionContentFrame ?? bounds
     hosting.frame = CGRect(origin:.zero,size:frame.size)
-    hosting.layer?.setAffineTransform(CGAffineTransform(translationX:frame.minX,y:frame.minY))
+    if let layer=hosting.layer {
+      layer.setAffineTransform(NotchElasticFrame.contentTransform(frame:frame,deformation:motionContentDeformation,anchor:layer.anchorPoint))
+    }
   }
 }
 

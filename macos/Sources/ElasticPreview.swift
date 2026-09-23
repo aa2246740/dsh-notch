@@ -20,6 +20,11 @@ final class ElasticPreviewDelegate: NSObject, NSApplicationDelegate, NSWindowDel
     for (title, key, selector) in [("待机", "1", #selector(showIdle)), ("运行中", "2", #selector(showBusy)), ("等待选择", "3", #selector(showQuestion)), ("恢复 Notch", "r", #selector(restore)), ("显示预览控制", "0", #selector(showControls))] {
       actions.addItem(withTitle: title, action: selector, keyEquivalent: key).target = self
     }
+    for (title,key,selector) in [("观察短拉", "4", #selector(inspectShortPull)),
+                                 ("观察中拉", "5", #selector(inspectMediumPull)),
+                                 ("观察长拉", "6", #selector(inspectLongPull))] {
+      actions.addItem(withTitle:title,action:selector,keyEquivalent:key).target = self
+    }
     actions.addItem(.separator())
     actions.addItem(withTitle:"记录下一次回弹帧", action:#selector(traceNextSpring), keyEquivalent:"t").target = self
     actions.addItem(withTitle:"回放并测量收纳", action:#selector(replaySpring), keyEquivalent:"p").target = self
@@ -65,6 +70,18 @@ final class ElasticPreviewDelegate: NSObject, NSApplicationDelegate, NSWindowDel
     NSApplication.shared.activate(ignoringOtherApps: true)
   }
 
+  @objc private func inspectShortPull() { inspectPull(32) }
+  @objc private func inspectMediumPull() { inspectPull(140) }
+  @objc private func inspectLongPull() { inspectPull(320) }
+  private func inspectPull(_ distance: CGFloat) {
+    choose(0)
+    dock.updateRest(CGSize(width:38,height:44))
+    dock.setHidden(false,animated:false)
+    let began=CACurrentMediaTime()
+    dock.begin(size:dock.restSize,at:began)
+    dock.drag(inward:distance,at:began+1)
+    window?.makeKeyAndOrderFront(nil)
+  }
   @objc private func showIdle() { choose(0) }
   @objc private func showBusy() { choose(1) }
   @objc private func showQuestion() { choose(2) }

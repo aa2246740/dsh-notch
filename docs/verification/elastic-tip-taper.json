@@ -1,0 +1,181 @@
+{
+  "date": "2026-09-23",
+  "scope": "Independent native elastic preview; production DSH not replaced",
+  "reason": "The previous shape pinched only the middle and retained a thick grabbed end. The free end must itself become thinner.",
+  "geometry": {
+    "profile": "6t^5 - 15t^4 + 10t^3, clamped to 0 at attachment and 1 throughout grabbed body",
+    "tipScale": "1 - 0.56 L^2 / (L^2 + 75^2)",
+    "horizontalSamples": [
+      {
+        "inwardPt": 0,
+        "tipHeightPt": 44.0
+      },
+      {
+        "inwardPt": 32,
+        "tipHeightPt": 40.2052398856971
+      },
+      {
+        "inwardPt": 80,
+        "tipHeightPt": 30.885987525987524
+      },
+      {
+        "inwardPt": 140,
+        "tipHeightPt": 24.854549058473737
+      },
+      {
+        "inwardPt": 220,
+        "tipHeightPt": 21.925478944932898
+      }
+    ],
+    "content": "The same normal-axis contraction, centered on the body and compensated for the actual AppKit layer anchor"
+  },
+  "checks": {
+    "edgeDock": "PASS, FAILURES=0",
+    "nativeGeometry": "PASS, FAILURES=0",
+    "releasePreviewBuild": "PASS",
+    "nativeInteraction": [
+      "Short, medium and long held stretches show a progressively thinner free end and aligned robot",
+      "Diagonal drag tucks; dragging the exposed edge restores",
+      "Dragging from an option does not submit it; restoring still shows one pending decision",
+      "A single click on the restored option changes pending decision 1 to running 1"
+    ]
+  },
+  "previewBinarySha256": "cdfd84e041275c9e9980ec5aad746d60a8e0208f8520af7022062393b1b3f13c",
+  "unchangedProductionBinarySha256": "2cdfe64bf7b4872dad9db81a0fa08cffab3d61da6cffa7cf513477e2ab3e2896",
+  "cpuBenchmark": {
+    "checksum": 11375164.315598244,
+    "geometry4800Frames": {
+      "maxMs": 80.45195834711194,
+      "medianMs": 65.88037498295307,
+      "microsecondsPerUnit": 13.725078121448556,
+      "runsMs": [
+        49.93099998682737,
+        52.13516647927463,
+        77.99987494945526,
+        80.45195834711194,
+        64.77391673251987,
+        72.40758324041963,
+        59.563791612163186,
+        65.88037498295307,
+        76.05079165659845
+      ]
+    },
+    "solver240kSteps": {
+      "maxMs": 2.3802914656698704,
+      "medianMs": 1.2395833618938923,
+      "microsecondsPerUnit": 0.005164930674557884,
+      "runsMs": [
+        2.3802914656698704,
+        1.2395833618938923,
+        1.20449997484684,
+        1.2065833434462547,
+        1.2095833662897348,
+        2.030583331361413,
+        1.192083116620779,
+        1.4146252069622278,
+        1.803916646167636
+      ]
+    }
+  },
+  "nativeReplay": {
+    "clock": "display-link",
+    "compositorSamples": 90,
+    "frames": 76,
+    "intervalMaxMs": 26.089833350852132,
+    "intervalP50Ms": 13.34179169498384,
+    "intervalP95Ms": 15.199625166133046,
+    "intervalsMs": [
+      20.58045845478773,
+      9.317791555076838,
+      13.358333380892873,
+      13.348333304747939,
+      13.654000125825405,
+      13.040874851867557,
+      13.589750044047832,
+      15.892291674390435,
+      10.717083467170596,
+      14.603916555643082,
+      11.840416584163904,
+      15.199625166133046,
+      11.535499943420291,
+      13.385791564360261,
+      13.360166689381003,
+      26.089833350852132,
+      1.2948750518262386,
+      12.498041614890099,
+      13.353041606023908,
+      13.327916851267219,
+      13.33999983035028,
+      14.737500110641122,
+      11.987083358690143,
+      13.34179169498384,
+      13.307541608810425,
+      13.350041583180428,
+      13.351583387702703,
+      13.379791751503944,
+      13.309541624039412,
+      13.326166663318872,
+      13.45525006763637,
+      13.27608316205442,
+      13.275583507493138,
+      13.330291491001844,
+      13.370166765525937,
+      13.277583289891481,
+      13.500958448275924,
+      13.263833243399858,
+      13.282000087201595,
+      13.480541529133916,
+      13.167666736990213,
+      13.46524991095066,
+      13.261291664093733,
+      13.365000020712614,
+      13.319833436980844,
+      13.313999865204096,
+      13.34200007840991,
+      13.35799996741116,
+      13.588541653007269,
+      13.070625020191073,
+      13.489958364516497,
+      13.344750041142106,
+      13.187541626393795,
+      13.33558326587081,
+      13.347458327189088,
+      13.276083394885063,
+      13.375833397731185,
+      13.53804161772132,
+      13.250000076368451,
+      15.753999818116426,
+      10.768333449959755,
+      13.537791557610035,
+      13.177833519876003,
+      13.306666631251574,
+      13.357624877244234,
+      13.317208271473646,
+      13.391666812822223,
+      13.342583319172263,
+      13.294041622430086,
+      13.331791618838906,
+      13.356458395719528,
+      13.349333312362432,
+      13.332375092431903,
+      13.332499889656901,
+      13.38308327831328,
+      13.273750199005008
+    ],
+    "intervalsOver20Ms": 2,
+    "maskAllocations": 0,
+    "renderCostsMs": [
+      3.3332083839923143,
+      10.561124887317419
+    ],
+    "renderMaxMs": 10.561124887317419,
+    "renderP95Ms": 3.3332083839923143,
+    "renderUpdates": 2,
+    "windowResizes": 1
+  },
+  "limits": [
+    "CPU benchmark ran while native test and preview builds were active; do not treat it as a controlled before/after comparison.",
+    "Callback timing and CPU costs do not prove displayed frame rate.",
+    "This records agent checks; user acceptance of the new shape is pending."
+  ]
+}

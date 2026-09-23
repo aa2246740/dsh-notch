@@ -30,30 +30,48 @@ import SwiftUI
       "resistance starts without a velocity corner")
     check(limit.distance(240) < limit.distance(360) && limit.distance(360) < 240,
       "the boundary progressively resists rather than stopping abruptly")
-    var lastWaist: CGFloat = 1
+    var lastTip: CGFloat = 1
     for length in [0.0,24,64,128,192,240] {
       let body=EdgeDockPose(inward:length).body, t=EdgeDockTension(body:body,anchorX:0)
-      check(t.waistScale <= lastWaist && t.waistScale >= 0.44, "longer stretch gets thinner with a material thickness floor")
-      lastWaist=t.waistScale
+      check(t.tipScale <= lastTip && t.tipScale >= 0.44, "longer stretch gets thinner with a material thickness floor")
+      lastTip=t.tipScale
     }
     for (x,y) in [(0.0,0.0),(150,0),(0,180),(160,100),(160,-100),(-12,180)] {
       let pose=EdgeDockPose(inward:x,down:y), body=pose.body, anchor=max(0,body.maxX)
       let t=EdgeDockTension(body:body,anchorX:anchor)
-      for p in [CGPoint(x:anchor,y:0),CGPoint(x:anchor,y:44),
-                CGPoint(x:body.minX,y:body.minY),CGPoint(x:body.maxX,y:body.minY),
-                CGPoint(x:body.minX,y:body.maxY),CGPoint(x:body.maxX,y:body.maxY),
-                CGPoint(x:body.midX,y:body.midY)] {
+      for p in [CGPoint(x:anchor,y:0),CGPoint(x:anchor,y:44),CGPoint(x:body.midX,y:body.midY)] {
         let q=t.point(p)
-        check(hypot(q.x-p.x,q.y-p.y)<1e-9, "attachment, original shell and content do not get squashed")
+        check(hypot(q.x-p.x,q.y-p.y)<1e-9, "fixed attachment and grabbed body center remain attached")
       }
-      for step in 0...20 {
+      let center=CGPoint(x:body.midX,y:body.midY)
+      for p in [CGPoint(x:body.minX,y:body.minY),CGPoint(x:body.maxX,y:body.minY),
+                CGPoint(x:body.minX,y:body.maxY),CGPoint(x:body.maxX,y:body.maxY)] {
+        let q=t.point(p)
+        let localNative=CGPoint(x:p.x-center.x,y:center.y-p.y).applying(t.nativeBodyDeformation)
+        check(hypot(q.x-center.x-localNative.x,q.y-center.y+localNative.y)<1e-8,
+          "native content has exactly the same deformation as the grabbed end")
+      }
+      var previousThickness: CGFloat = 60
+      for step in 0...30 {
         let s=t.start+t.span*Double(step)/20
         let center=CGPoint(x:t.origin.x+t.axis.dx*s,y:t.origin.y+t.axis.dy*s)
         let a=t.point(CGPoint(x:center.x-t.normal.dx*30,y:center.y-t.normal.dy*30))
         let b=t.point(CGPoint(x:center.x+t.normal.dx*30,y:center.y+t.normal.dy*30))
-        check((b.x-a.x)*t.normal.dx+(b.y-a.y)*t.normal.dy >= 60*0.44-1e-9,
-          "the waist remains ordered and cannot fold over or pinch closed")
+        let thickness=(b.x-a.x)*t.normal.dx+(b.y-a.y)*t.normal.dy
+        check(thickness >= 60*0.44-1e-9 && thickness <= previousThickness+1e-9,
+          "material continuously narrows toward the left end without a thick head")
+        previousThickness=thickness
       }
+    }
+    var previousTipHeight: CGFloat = 44
+    for length in [0.0,32,80,140,220] {
+      let body=EdgeDockPose(inward:length).body, t=EdgeDockTension(body:body,anchorX:0)
+      let top=t.point(CGPoint(x:body.midX,y:body.minY)), bottom=t.point(CGPoint(x:body.midX,y:body.maxY))
+      let tipHeight=bottom.y-top.y
+      check(tipHeight <= previousTipHeight && (length == 0 || tipHeight < 44),
+        "the grabbed end itself gets thinner at every greater pull distance")
+      if length == 220 { check(tipHeight < 23, "long pull visibly halves the actual left end thickness") }
+      previousTipHeight=tipHeight
     }
     let far=make(); far.begin(size:far.restSize,at:0); far.drag(inward:800,down:600,at:0.2)
     check(abs(hypot(far.pose.inward,far.pose.down)-240)<0.001, "very long native pointer travel remains bounded")
@@ -239,9 +257,16 @@ import SwiftUI
         if let viewport = native.presentationBounds, let layer = host.layer, let root = panel.contentView?.layer {
           let body = native.pose.body
           let actual = layer.convert(layer.bounds,to:root)
-          let expected = CGRect(x:body.minX-viewport.minX,y:viewport.maxY-body.maxY,width:body.width,height:body.height)
+          let tension=native.geometry.tension
+          let corners=[CGPoint(x:body.minX,y:body.minY),CGPoint(x:body.maxX,y:body.minY),
+                       CGPoint(x:body.minX,y:body.maxY),CGPoint(x:body.maxX,y:body.maxY)].map { p in
+            let q=tension.point(p)
+            return CGPoint(x:q.x-viewport.minX,y:viewport.maxY-q.y)
+          }
+          let expected=CGRect(x:corners.map(\.x).min()!,y:corners.map(\.y).min()!,
+            width:corners.map(\.x).max()!-corners.map(\.x).min()!,height:corners.map(\.y).max()!-corners.map(\.y).min()!)
           check(abs(actual.minX-expected.minX)<0.01 && abs(actual.minY-expected.minY)<0.01 && abs(actual.width-expected.width)<0.01 && abs(actual.height-expected.height)<0.01,
-                "native content and contour use the same pose without per-frame SwiftUI layout")
+                "native content and narrowing end use the same deformation without SwiftUI relayout: actual=\(actual) expected=\(expected) anchor=\(layer.anchorPoint)")
         }
       }
     }
