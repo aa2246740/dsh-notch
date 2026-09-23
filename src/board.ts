@@ -68,8 +68,15 @@ export class Board {
   private readonly pendingUnread = new Set<string>()
   private readonly listeners = new Set<() => void>()
   private focus: NotchFocus | null = null
+  // NOTE (Windows port): declared as an explicit field instead of a constructor
+  // parameter property. Node 24 loads this .ts entry with strip-only type
+  // stripping, which rejects parameter properties outright
+  // (ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX). Semantics are unchanged.
+  private readonly ctx: Context
 
-  constructor(private readonly ctx: Context) {}
+  constructor(ctx: Context) {
+    this.ctx = ctx
+  }
 
   onChange(fn: () => void): () => void {
     this.listeners.add(fn)
@@ -244,7 +251,19 @@ export class Board {
     }
     const dismissed = lastSeen !== undefined && (folded.lastTurn === undefined || lastSeen >= folded.lastTurn.at)
     const mirror = this.sidebarRows()
-    const unread = dismissed
+    // NOTE (Windows port, fork differences #2 and #3): the sidebar mirror used to
+    // be consulted WITHOUT either guard below.
+    //   * Without `dismissed`, `unread` came straight from the page's `completed`
+    //     flag, which made "mark all seen" a permanent no-op: the lamps were
+    //     cleared in `seen` and re-armed by the very next sync (and markAllSeen
+    //     does not touch sidebar rows at all). An explicitly dismissed session is
+    //     now read no matter what the page reports — the rule the non-mirror
+    //     branch always had.
+    //   * Without `!busy`, a running session whose row the page reported as
+    //     completed showed a green "finished" lamp while it was still working.
+    //     Upstream's own lamp predicate requires !busy (RootView.swift:150-152);
+    //     the mirror path just never checked it.
+    const unread = busy || dismissed
       ? false
       : mirror !== undefined
         ? mirror.some(row => row.id === session.id && row.completed)
