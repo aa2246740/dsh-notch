@@ -34,6 +34,16 @@ test('a new turn clears the previous abort so a running session cannot stay red'
   assert.equal(folded.lastTurn, undefined)
 })
 
+test('a fork-seed closer is not a failure lamp', () => {
+  const folded = foldSession(session([
+    { type: 'turn/start', time: 1 },
+    { type: 'turn/end', time: 2, data: { reason: { kind: 'forked' } } },
+  ]))
+  assert.equal(folded.busy, false)
+  assert.equal(folded.lastTurn.kind, 'forked')
+  assert.equal(folded.lastTurn.failed, false)
+})
+
 test('error still counts as failed after the turn ends', () => {
   const folded = foldSession(session([
     { type: 'turn/start', time: 1 },
