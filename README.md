@@ -11,6 +11,7 @@
 ### 准备条件
 
 - macOS 14 或更新版本。
+- DeepSeek Harness `0.1.7-rc.1`。本包对 `@deepseek-ai/dsh` 与所用 `@deepseek-ai/dsh-*` 的 peer 是 `>=0.1.7-rc.1 <0.1.8`。
 - 本机已有正常运行的 DSH Web Host；终端能使用 `dsh`、`pnpm` 和 `git`。
 - Swift 6 或更新版本的 Command Line Tools。用 `swift --version` 检查；没有开发工具时先运行 `xcode-select --install`。
 
