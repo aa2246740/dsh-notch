@@ -1,0 +1,9 @@
+node_portable=v24.5.0
+npm_portable=11.5.1
+dotnet_sdk=8.0.425 (local C:\Cursor-Home-Windows\workspace\.tools\dotnet-sdk)
+dotnet_runtime_system=8.0.17 WindowsDesktop + others
+cargo=MISSING
+rustc=MISSING
+system_npm=MISSING
+gh=MISSING
+webview2=153.0.4234.48 (EdgeWebView)
