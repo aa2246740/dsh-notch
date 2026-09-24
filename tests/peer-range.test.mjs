@@ -11,9 +11,9 @@ const PEERS = [
   '@deepseek-ai/dsh-user-questions',
 ]
 
-test('Harness peer range is the 0.1.7-rc.1 desk pin', () => {
+test('Harness peer range includes the 0.1.7-rc.2 desk pin', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-  assert.equal(pkg.version, '0.3.1')
+  assert.equal(pkg.version, '0.3.2')
   for (const name of PEERS) {
     assert.equal(pkg.peerDependencies[name], RANGE)
     assert.equal(pkg.peerDependenciesMeta[name].optional, true)
