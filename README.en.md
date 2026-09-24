@@ -11,7 +11,7 @@ Installation has two parts: a **Host plugin inside DSH** that supplies session s
 ### Requirements
 
 - macOS 14 or later.
-- DeepSeek Harness `0.1.7-rc.1`. This package peers `@deepseek-ai/dsh` and the `@deepseek-ai/dsh-*` packages it imports at `>=0.1.7-rc.1 <0.1.8`.
+- DeepSeek Harness `0.1.7-rc.2`. This package peers `@deepseek-ai/dsh` and the `@deepseek-ai/dsh-*` packages it imports at `>=0.1.7-rc.1 <0.1.8`. That range includes `0.1.7-rc.1` and `0.1.7-rc.2`.
 - A working local DSH Web Host, with `dsh`, `pnpm`, and `git` available in your terminal.
 - Swift 6 or later through Command Line Tools. Check with `swift --version`; use `xcode-select --install` if the developer tools are missing.
 
