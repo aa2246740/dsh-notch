@@ -8,9 +8,12 @@ Installation has two parts: a **Host plugin inside DSH** that supplies session s
 
 ## Installation
 
+This branch targets official **DSH Desktop 0.1.7-rc.2** and keeps Web support. Use the official app’s Plugins page to install and enable the built package for Desktop. The CLI commands below are for Web only; do not use the CLI to mutate the Desktop-owned profile.
+
 ### Requirements
 
 - macOS 14 or later.
+- DeepSeek Harness `0.1.7-rc.2`. This package peers `@deepseek-ai/dsh` and the `@deepseek-ai/dsh-*` packages it imports at `>=0.1.7-rc.1 <0.1.8`. That range includes `0.1.7-rc.1` and `0.1.7-rc.2`.
 - A working local DSH Web Host, with `dsh`, `pnpm`, and `git` available in your terminal.
 - Swift 6 or later through Command Line Tools. Check with `swift --version`; use `xcode-select --install` if the developer tools are missing.
 
@@ -21,6 +24,8 @@ These instructions use the default `web` profile and `~/.dsh`. For a custom `DSH
 ```sh
 git clone https://github.com/aa2246740/dsh-notch.git
 cd dsh-notch
+npm ci --ignore-scripts --legacy-peer-deps
+npm run build
 dsh plugin --profile web add "$PWD"
 ```
 
@@ -34,21 +39,11 @@ If you run DSH from source without a global `dsh` command, run this from the Har
 pnpm dsh plugin --profile web add /absolute/path/to/dsh-notch
 ```
 
-### 2. Activate the plugin in DSH
+### 2. Enable the Host plugin
 
-Append this item to the YAML list in `~/.dsh/profiles/web/cordis.patch.yml`. Create the file if absent. **Keep existing configuration, and add this ID only once.**
+Confirm DSH Notch is enabled in the Plugins page. The package includes its bundle patch; do not add a second same-name insert. Update the existing entry when migrating an older installation.
 
-```yaml
-- insert:
-    - id: dsh-notch
-      name: dsh-notch
-```
-
-`name: dsh-notch` resolves the profile dependency from step 1. Do not copy the repository's `cordis.yml` directly into this location; its relative paths serve a different purpose.
-
-The standard Web profile watches this file and loads the plugin after saving. If DSH is not running yet, start it using your usual launcher. Successful loading emits `[my-plugins/dsh-notch] loaded` in the Host log and creates `~/.dsh/dsh-notch/runtime.json`.
-
-The plugin manages this private connection file automatically. Do not fill it in manually or paste its contents into a chat. If it is absent, resolve YAML, module-resolution, or missing-service errors in the Host before continuing.
+A loaded Host writes its private connection file to `$DSH_HOME/dsh-notch/runtime.json`. Do not fill in or share that file. Check plugin loading errors if it is absent. The native helper is installed separately below.
 
 ### 3. Build and start the real Notch
 
@@ -105,7 +100,7 @@ External Codex, Claude Code, ACP, and DSH SDK children registered as official ba
 | Two Notches | Check for both a manually started and a desktop-shell-managed copy. |
 | Old behavior after updating source | Rebuild and replace the executable actually running; `git pull` does not replace an existing native process. |
 
-The Host plugin requires `sessions`, `webServer`, `approval`, `userQuestions`, and `agents`. It targets a local DSH Web Host on the same Mac. Native foregrounding looks for a DSH.app with bundle ID `local.dsh.desktop`; other desktop shells need an adapter. Successful package installation alone does not certify multiple Homes, remote Hosts, or every DSH version.
+The Host plugin requires `sessions`, `webServer`, `approval`, `userQuestions`, and `agents`. It targets a local DSH Web Host on the same Mac. Native foregrounding prefers official `com.deepseek.dsh` and retains compatibility with `local.dsh.desktop`. Successful package installation alone does not certify multiple Homes, remote Hosts, or every DSH version.
 
 ## Updates and development
 
@@ -143,3 +138,5 @@ More: [motion contracts](macos/STATUS-MOTION.md), [design notes](DESIGN.md), [0.
 ## License
 
 [MIT](LICENSE). Robot resources derive from [OpenBotMotion](https://github.com/aa2246740/open-bot-motion); its original [MIT notice](tools/idle/LICENSE.open-bot-motion) is retained. This is a community-maintained DSH plugin.
+
+See the [Desktop 0.1.7-rc.2 verification record](docs/desktop-017rc2.md). `DSH_NOTCH_RUNTIME_FILE` selects the connection only. Use explicit `--demo` or `--elastic-preview` modes for offline presentation.

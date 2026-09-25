@@ -1,10 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
-const DIR = join(homedir(), '.dsh', 'dsh-notch')
-const RUNTIME = join(DIR, 'runtime.json')
+export const DIR = join(resolveDshHome(), 'dsh-notch')
+export const RUNTIME = join(DIR, 'runtime.json')
 const SEEN = join(DIR, 'seen.json')
 
 export interface RuntimeFile {

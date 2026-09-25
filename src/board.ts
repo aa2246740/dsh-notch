@@ -371,7 +371,7 @@ export class Board {
     // job registry retains their owner through running and stopping, including
     // jobs that were already active when Notch was hot-loaded.
     const jobs = this.ctx.get('jobs') as Pick<JobRegistry, 'list'> | undefined
-    return jobs?.list(agent).some(job => job.ownerSession === session.id
+    return jobs?.list(agent.id).some(job => job.owner === session.id
       && job.kind === 'subagent'
       && (job.status === 'running' || job.status === 'stopping')) ?? false
   }

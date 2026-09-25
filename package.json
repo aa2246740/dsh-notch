@@ -1,12 +1,12 @@
 {
   "name": "dsh-notch",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
-  "main": "src/dsh-notch.ts",
+  "main": "lib/index.mjs",
   "description": "Native macOS notch for live DSH sessions, approvals, and model questions.",
   "scripts": {
-    "test": "node --import tsx --test tests/*.test.mjs",
+    "test": "node --import ./tests/isolate-home.mjs --import tsx --test tests/*.test.mjs",
     "test:motion": "sh macos/Tests/motion.sh",
     "test:geometry": "sh macos/Tests/geometry.sh",
     "build:macos": "swift build --package-path macos -c release",
@@ -18,10 +18,57 @@
     "build:demo": "sh tools/recording/build.sh",
     "test:scrollbar": "sh macos/Tests/scrollbar.sh",
     "test:expanded-height": "sh macos/Tests/expanded-height.sh",
-    "test:host-lifetime": "sh macos/Tests/host-lifetime.sh"
+    "test:host-lifetime": "sh macos/Tests/host-lifetime.sh",
+    "build": "tsdown --config-loader native",
+    "test:desktop-launch": "sh macos/Tests/desktop-launch.sh"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-home-paths": "^0.1.7-rc.2",
+    "tsdown": "^0.22.2",
     "tsx": "4.22.4"
   },
-  "license": "MIT"
+  "peerDependencies": {
+    "@deepseek-ai/dsh": ">=0.1.7-rc.1 <0.1.8",
+    "@deepseek-ai/dsh-home-paths": ">=0.1.7-rc.1 <0.1.8",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.7-rc.1 <0.1.8",
+    "@deepseek-ai/dsh-session": ">=0.1.7-rc.1 <0.1.8",
+    "@deepseek-ai/dsh-user-approval": ">=0.1.7-rc.1 <0.1.8",
+    "@deepseek-ai/dsh-user-questions": ">=0.1.7-rc.1 <0.1.8",
+    "@deepseek-ai/schemastery": "^3.18.4"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-host-webserver": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-user-approval": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-user-questions": {
+      "optional": true
+    }
+  },
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "package.json",
+    "README.md",
+    "LICENSE",
+    "lib",
+    "desktop",
+    "dshx.yml",
+    "README.en.md",
+    "docs"
+  ]
 }

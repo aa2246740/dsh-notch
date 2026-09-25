@@ -12,3 +12,5 @@ hotReload:
     - src/session-state.ts
     - src/types.ts
     - src/browse-sync.ts
+    - desktop/notch-lifecycle.mjs
+    - lib/index.mjs

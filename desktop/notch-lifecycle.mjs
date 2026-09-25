@@ -25,7 +25,7 @@ export function processLiveness(pid) {
 }
 
 /** The desktop owns an adopted helper too. If it exits during adoption, retry. */
-export function superviseNotch({ bin, pidPath, log, interval = 250,
+export function superviseNotch({ bin, pidPath, log, interval = 250, env = process.env,
   probe = processIdentity, alive = processLiveness, launch = spawn, signal = process.kill.bind(process) }) {
   let current, pending, timer, stopped = false
   const starts = []
@@ -70,7 +70,7 @@ export function superviseNotch({ bin, pidPath, log, interval = 250,
     while (starts.length && Date.now() - starts[0] > 10000) starts.shift()
     if (starts.length >= 3) { note('helper repeatedly exited; retry paused'); stopped = true; return }
     starts.push(Date.now())
-    const child = launch(bin, [], { stdio: ['ignore', 'pipe', 'pipe'], detached: false })
+    const child = launch(bin, [], { stdio: ['ignore', 'pipe', 'pipe'], detached: false, env })
     pending = child
     child.stdout?.pipe(log, { end: false })
     child.stderr?.pipe(log, { end: false })

@@ -113,7 +113,7 @@ test('reading an idle owner while its child or remote job runs cannot acknowledg
     const root = { id, header: {}, snapshotEvents: () => [{ type: 'turn/end', time: 100, data: { reason: { kind: 'completed' } } }] }
     const child = { id: id + '-child', header: { origin: 'subagent', parentSession: id }, snapshotEvents: () => [] }
     const agent = { status: 'idle' }, childAgent = { status: 'running' }
-    const jobs = [{ ownerSession: id, kind: 'subagent', status: 'running' }]
+    const jobs = [{ owner: id, kind: 'subagent', status: 'running' }]
     const sessions = kind === 'local-child' ? [root, child] : [root]
     const board = new Board({ sessions: { list: () => sessions },
       agents: { get: key => key === id ? agent : childAgent },

@@ -1151,7 +1151,8 @@ struct NotchBlueTinyButtonStyle: ButtonStyle {
 /// Bring the DSH desktop app forward so the focused session is visible.
 @MainActor
 func activateDSH() {
-  let apps = NSRunningApplication.runningApplications(withBundleIdentifier: "local.dsh.desktop")
+  let official = NSRunningApplication.runningApplications(withBundleIdentifier: "com.deepseek.dsh")
+  let apps = official.isEmpty ? NSRunningApplication.runningApplications(withBundleIdentifier: "local.dsh.desktop") : official
   guard let app = apps.first else { return }
   app.unhide()
   _ = app.activate()

@@ -9,7 +9,7 @@ function fixture() {
     agents: { get: id => agents.get(id) },
     get: name => name === 'jobs' ? {
       // Match JobRegistry.list: owned + unowned records, non-consuming.
-      list: agent => jobs.filter(job => !job.ownerSession || job.ownerSession === agent.id),
+      list: ownerId => jobs.filter(job => !job.owner || job.owner === ownerId),
     } : undefined,
     logger: { warn() {} },
   }
@@ -21,7 +21,7 @@ function fixture() {
     return session
   }
   const job = (owner, status = 'running', kind = 'subagent') => {
-    const record = { id: 'job-' + jobs.length, kind, status, ownerSession: owner?.id, reported: false }
+    const record = { id: 'job-' + jobs.length, kind, status, owner: owner?.id, reported: false }
     jobs.push(record)
     return record
   }

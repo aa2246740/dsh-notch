@@ -1,16 +1,23 @@
 import type { Context } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
+import { createWriteStream, existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { superviseNotch } from '../desktop/notch-lifecycle.mjs'
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-session'
 import { Board } from './board.ts'
 import { attachHttp } from './http.ts'
-import { loadOrCreateToken, writeRuntime } from './store.ts'
+import { DIR, RUNTIME, loadOrCreateToken, writeRuntime } from './store.ts'
 
 export const name = 'dsh-notch'
 export const inject = ['sessions', 'webServer', 'approval', 'userQuestions', 'agents']
+export const Config = Schema.object({
+  helperPath: Schema.string().default('').description('Optional installed native Notch executable; managed for this Host lifetime.'),
+})
 
-export function apply(ctx: Context) {
+export function apply(ctx: Context, config: { helperPath?: string } = {}) {
   console.log('[my-plugins/dsh-notch] loaded')
   const board = new Board(ctx)
   const token = loadOrCreateToken()
@@ -21,6 +28,15 @@ export function apply(ctx: Context) {
     pid: process.pid,
     writtenAt: Date.now(),
   })
+  if (config.helperPath) {
+    if (!existsSync(config.helperPath)) throw new Error('Configured Notch helper does not exist')
+    ctx.effect(() => {
+      const log = createWriteStream(join(DIR, 'helper.log'), { flags: 'a', mode: 0o600 })
+      const helper = superviseNotch({ bin: config.helperPath, pidPath: join(DIR, 'helper.pid'), log,
+        env: { ...process.env, DSH_NOTCH_RUNTIME_FILE: RUNTIME } })
+      return () => { helper.stop(); log.end() }
+    }, 'dsh-notch: native helper')
+  }
 
   ctx.effect(() => attachHttp(ctx, board, token, origin), 'dsh-notch: http')
 

@@ -128,12 +128,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let layout = NotchScreenLayout(availableHeight: visible.height, preferredInset: topOffset)
     model.maximumExpandedHeight = layout.maximumHeight
     // Anchor capsule to upper-right edge, ~100pt below top of usable screen.
-    // Keep the test helper separate from the real Notch during walkthroughs.
-    let demoInset: CGFloat = ProcessInfo.processInfo.environment["DSH_NOTCH_RUNTIME_FILE"] == nil ? 0 : 360
+    // A runtime-file override selects the Host connection, never presentation.
+    // Offline windows have explicit --demo / --elastic-preview entry points.
     let width = max(1, model.currentIslandWidth)
     let height = min(max(1, model.currentIslandHeight), model.maximumExpandedHeight)
-    var anchor=layout.anchor(screen:screen.frame,visible:visible)
-    anchor.x -= demoInset
+    let anchor=layout.anchor(screen:screen.frame,visible:visible)
     if let dockController {
       // Keep the hidden crop/flight intact; never resize to the full body and
       // then infer a screen anchor from the old crop's coordinate system.
@@ -166,8 +165,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
       return
     }
-    // A guided local walkthrough stays visible until its test answer is sent.
-    if ProcessInfo.processInfo.environment["DSH_NOTCH_RUNTIME_FILE"] != nil && model.needsAction { return }
     guard model.expanded, model.foldEnabled, enteredIsland, foldWork == nil else { return }
     let work = DispatchWorkItem { [weak self] in
       Task { @MainActor in
