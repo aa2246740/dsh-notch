@@ -1,27 +1,38 @@
-# dsh-notch-focus
+# dsh-notch-focus 0.1.1
 
-DSH Notch 的浏览器同步助手，负责把 Notch 的“打开对话”操作送到当前 DSH 页面，并同步未加载会话的未读状态。普通用户 fork 独立保留；只有 `origin: subagent` 的会话被排除。
+DSH Notch 的客户端同步助手，正式适配 DeepSeek Harness **0.1.7-rc.2 Desktop / Web**。与 `dsh-notch` 0.3.2 同时更新。
 
-已有安装可以继续使用原目录；更新源码、构建即可通过已有客户端 HMR 生效。不要重复安装同名助手。
+- 从 Notch 点击会话，通过 RC2 的 `uiWorkspace.openSession` 打开对话。
+- 从 RC2 `uiSession.sessionStatus` 读取未读完成状态，通过 `retainedBy.mainView` 识别当前会话。
+- 仅前台页面查看已完成会话时发送带时间的阅读确认；后台页面、仍运行的会话不会清除未读结果。
+- 保留用户 fork，只排除 `origin: subagent` 的子代理；允许 API 创建的自定义会话 ID。
+- 首次轮询忽略旧跳转请求，避免重新打开页面时意外切换会话。
 
-同步协议第 3 版会区分任务完成和用户已读：只有获得焦点的页面正在查看该会话时，才发送带时间的阅读确认。另一个页面没有完成标记，不会让 Notch 的提醒消失。请同时更新 Notch Host 插件，以使用这套确认机制。
+## 安装
 
-首次安装时，先配置 DSHX 指向当前 Harness checkout，然后在本目录执行：
+下载 [Notch v0.3.2 Release](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.2) 的 `dsh-notch-focus-0.1.1.tgz`，与 Host 插件安装到同一个 profile。
+
+Desktop 使用应用内插件管理页；Web 使用：
 
 ```sh
-pnpm install
-DSHX_HARNESS=/absolute/path/to/deepseek-harness pnpm build
-dsh plugin --profile web add "$PWD"
+dsh plugin --profile web add /absolute/path/to/dsh-notch-focus-0.1.1.tgz
 ```
 
-在同一 DSH Home 的 Web profile `cordis.patch.yml` 中追加以下项，保留已有配置：
+包内已有官方 `dsh.bundle.patch`，不要再手动追加同名条目。按管理器提示完成加载并重新打开页面；已有安装更新原条目。只替换磁盘文件不代表当前页面已加载新代码。
 
-```yaml
-- insert:
-    - id: dsh-notch-focus
-      name: dsh-notch-focus
+## 从源码构建
+
+开发者需要 Node.js 24、DSHX 和已备好依赖的 **0.1.7-rc.2** Harness checkout。在本目录运行：
+
+```sh
+npm ci --ignore-scripts --legacy-peer-deps
+DSHX_HARNESS=/absolute/path/to/deepseek-harness npm run build
 ```
 
-首次加入客户端后重新打开 DSH 页面。Host 不需要为这一步重启。Notch Host 插件和本助手必须使用同一个 Web Host。
+编译只写本插件的 `lib/`。客户端产物为 `lib/client.js`，使用 DSHX 的外部构建适配器。发布包已经带有该产物，安装者无需源码构建或 DSHX。
 
-This companion follows native Notch focus requests and mirrors cold-session unread state into the Notch Host. It supports any authenticated WebUI on the same Host. User forks remain independent; only durable subagent origins are filtered. Existing installations keep their current directory and use client HMR after rebuilding. For a new installation, build and add the package as above, insert its row into the same profile, then reopen the page for the new client graph. No Host restart is needed.
+## English
+
+The 0.1.1 companion supports DSH 0.1.7-rc.2 Desktop and Web with Notch 0.3.2. It uses `uiWorkspace.openSession`, `uiSession.sessionStatus`, and main-view retention for bidirectional navigation and timestamped reading acknowledgements. Inactive pages and running sessions cannot clear unread results. User forks remain independent; delegated subagents are excluded.
+
+Install the prebuilt `.tgz` from the linked release using the Desktop Plugins page or the Web CLI above. Both plugins must use the same profile. The package supplies its Bundle patch; do not mount it again manually. Follow the manager's loading instructions and reopen the page. Client HMR in every Desktop variant is not claimed.

@@ -8,71 +8,57 @@
 
 ## 安装
 
-### 准备条件
+**0.3.2 正式适配 DeepSeek Harness 0.1.7-rc.2 Desktop / Web。** 在 DSH 前台打开已完成的会话，Notch 会同步清除未读结果；从 Notch 点击会话，也能回到 DSH。
 
-- macOS 14 或更新版本。
-- DeepSeek Harness `0.1.7-rc.2`。本包对 `@deepseek-ai/dsh` 与所用 `@deepseek-ai/dsh-*` 的 peer 是 `>=0.1.7-rc.1 <0.1.8`，该范围包含 `0.1.7-rc.1` 与 `0.1.7-rc.2`。
-- 本机已有正常运行的 DSH Web Host；终端能使用 `dsh`、`pnpm` 和 `git`。
-- Swift 6 或更新版本的 Command Line Tools。用 `swift --version` 检查；没有开发工具时先运行 `xcode-select --install`。
+### 1. 下载发布包
 
-当前适配官方桌面版 **DSH 0.1.7-rc.2**，保留 Web profile 支持。官方桌面版的 `desktop` profile 由应用独占管理，安装和启用请使用应用内插件管理页；不要用 CLI 修改 desktop profile。下面的 CLI 命令仅用于 Web profile。自定义 `DSH_HOME` 时，Host 和 Notch 必须指向同一 Home。
+从 [v0.3.2 Release](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.2) 下载：
 
-### 1. 下载并安装 Host 插件
+| 文件 | 用途 |
+| --- | --- |
+| `dsh-notch-0.3.2.tgz` | Host 插件，提供状态、问题和原生程序连接 |
+| `dsh-notch-focus-0.1.1.tgz` | 客户端同步助手，负责双向会话跳转与已读同步 |
+| `dsh-notch-0.3.2-macos-arm64.tar.gz` | macOS 14+、Apple Silicon 原生程序及机器人资源 |
+| `SHA256SUMS` | 下载校验；与上述文件放在同一目录后执行 `shasum -a 256 -c SHA256SUMS` |
 
-```sh
-git clone https://github.com/aa2246740/dsh-notch.git
-cd dsh-notch
-npm ci --ignore-scripts --legacy-peer-deps
-npm run build
-dsh plugin --profile web add "$PWD"
-```
+预编译包无需 Swift 或 DSHX。其他架构需从源码构建，尚未提供验收过的预编译包。
 
-这条命令把本地插件目录链接到 DSH 的 Web profile。请保留这个目录，后面还要在这里构建 Notch。
+### 2. 在 DSH 安装两个插件包
 
-当前包声明了 `dsh.bundle`，Host 入口是预编译的 `lib/index.mjs`。官方桌面版用户完成构建后，在应用内插件管理页安装这个目录或打包后的插件。请保留源码目录，后面还要在这里构建原生 Notch。
+**官方 Desktop：** 在应用内插件管理页安装 Host 和同步助手的两个 `.tgz`，确认都已启用，按应用提示完成加载，再重新打开页面。Desktop profile 由应用管理。
 
-<details>
-<summary>从 Harness 源码运行，没有全局 dsh 命令？</summary>
-
-在 Harness checkout 里运行它自己的 CLI，使用刚下载插件的绝对路径：
+**Web：** 对运行中的 Host 使用相同的 `DSH_HOME`，在下载目录执行：
 
 ```sh
-pnpm dsh plugin --profile web add /absolute/path/to/dsh-notch
+dsh plugin --profile web add "$PWD/dsh-notch-0.3.2.tgz"
+dsh plugin --profile web add "$PWD/dsh-notch-focus-0.1.1.tgz"
 ```
 
-然后回到 `dsh-notch` 目录继续下面的步骤。
+两个包都声明了官方 `dsh.bundle.patch`。按插件管理器的提示加载，并重新打开页面；不要再手工追加同名 `insert`。已有安装应更新原条目，避免 Bundle 与旧手动配置重复挂载。
 
-</details>
+Host 加载后生成 `$DSH_HOME/dsh-notch/runtime.json`。这是插件管理的私有连接文件，不需要填写或分享。找不到它时，先检查 Host 插件的加载错误。
 
-### 2. 在 DSH 中启用插件
-
-在插件管理页确认 DSH Notch 已启用。包自带 `cordis.patch.yml`，不要再重复添加同名 `insert`；旧版已有挂载的安装应更新原来的条目。
-
-成功加载后，Host 生成 `$DSH_HOME/dsh-notch/runtime.json`。这份私有连接文件由插件管理，不需要手工填写或发送给 Agent。若未生成，先检查插件管理页和 Host 的加载错误。安装包和原生程序是两步，只有 Host 插件不会自动出现 Notch。
-
-### 3. 构建并启动正式 Notch
-
-在刚下载的 `dsh-notch` 目录执行：
+### 3. 解压并启动原生程序
 
 ```sh
-swift build --package-path macos -c release
-macos/.build/release/dsh-notch --verify-idle-resources
-macos/.build/release/dsh-notch
+tar -xzf dsh-notch-0.3.2-macos-arm64.tar.gz
+cd dsh-notch-0.3.2-macos-arm64
+./dsh-notch --verify-idle-resources
+./dsh-notch
 ```
 
-资源检查应输出 `IDLE_RESOURCES=10/10`。最后一条命令启动连接真实 DSH 会话的 Notch；首次启动时保持这个终端窗口打开。
+资源检查应输出 `IDLE_RESOURCES=10/10`。首次运行请保持终端打开；如果已有桌面启动器管理 Notch，更新它使用的那份程序即可。移动时始终把 `dsh-notch` 和 `DshNotch_DshNotch.bundle` 放在一起。使用自定义 `DSH_HOME` 时，原生程序和 Host 必须指向同一 Home。
 
-Notch 会跟随 `runtime.json` 中的 Host 进程：收到进程退出通知后立即关闭，不再人为等待 2 秒，单独热更新启动的 Notch 也一样。临时请求失败不会让它退出。仅关闭 DSH 的窗口、但 Host 仍在后台运行时，Notch 会继续显示任务；再次启动 Host 后，按原来的入口启动 Notch。离线演示不受这条规则影响。App 壳可接入 [退出与快速重启联动](desktop/README.md)，接管已有 Notch，并在它恰好退出时补开一份。
+可在 Host 插件配置中把 `helperPath` 设为已解压的 `dsh-notch` 的绝对路径，让插件随 Host 管理辅助进程；配置后按应用的插件加载提示生效。请勿同时手工启动另一份。
 
-如果你使用的 DSH.app 已经在管理一份 Notch，只更新那份程序，避免同时启动两个。移动程序或接入 App 壳时，要把 `dsh-notch` 和同一构建目录的 `DshNotch_DshNotch.bundle` 一起放到目标目录，再重新启动 Notch 程序。单独安装 Host 插件不会自动配置登录启动，也不会替换某个 App 壳里的旧程序。
+### 4. 确认同步正常
 
-### 4. 确认安装成功
+- 正在运行的主会话显示蓝色计数；完成、失败或等待回答显示对应状态。
+- 点击 Notch 的会话，DSH 打开对应对话。
+- 在 DSH 前台打开已完成的会话，Notch 清除该条未读状态；仍在运行的任务继续保留。
+- 全部结果读完后，Notch 回到机器人待机。
 
-- 没有活跃任务和未读结果时，屏幕边缘出现机器人。
-- 已有会话运行时出现蓝色计数；完成、失败或等待决定时显示对应状态。
-- 点击会话能回到 DSH；出现问题时可以直接在 Notch 里选择回答。
-
-可以用已有会话检查，不必为了测试新开一个模型任务。仅出现机器人还不能证明已经连接 Host；还要确认真实会话状态能同步。
+Notch 跟随连接文件中的 Host 进程退出。临时请求失败不会让它退出；只关闭窗口而 Host 仍在后台运行时，它会继续显示任务。[桌面托管说明](desktop/README.md)介绍了辅助程序的退出与快速重启联动。
 
 ## 使用
 
@@ -117,10 +103,20 @@ Notch 使用原生 AppKit / SwiftUI / Canvas 渲染。动画本身不调用模�
 
 使用 [dshx](https://github.com/aa2246740/dsh-external-plugin-devkit) 的维护者可先执行 `dshx activation-plan dsh-notch --change artifact` 或 `--change server`，按实际修改范围更新。激活要匹配实际 Host 和挂载方式，不能把复制原生二进制当作 Host 模块热更新。
 
+从源码构建 Host 和原生程序需要 Node.js 24、Swift 6 / Command Line Tools：
+
+```sh
+npm ci --ignore-scripts --legacy-peer-deps
+npm run build
+npm run build:macos
+```
+
+同步助手的源码构建需要指向 RC2 checkout 的 DSHX；步骤见[助手说明](companions/dsh-notch-focus/README.md)。预编译发布包不需要这些开发工具。
+
 开发检查：
 
 ```sh
-npm ci
+npm ci --ignore-scripts --legacy-peer-deps
 npm test
 npm run test:outcome
 npm run test:motion
@@ -145,7 +141,7 @@ open "dist/DSH Notch Demo.app"
 
 Demo 提供 36 个中英双语场景，使用本地假任务，不连接 DSH。录屏控制与快捷键见 [Demo 文档](tools/recording/README.md)。
 
-更多：[动效说明](macos/STATUS-MOTION.md) · [设计说明](DESIGN.md) · [0.3.0 更新记录](docs/releases/v0.3.0.md) · [可选 App 壳诊断](tools/desktop-shell/README.md)。
+更多：[动效说明](macos/STATUS-MOTION.md) · [设计说明](DESIGN.md) · [0.3.2 更新记录](docs/releases/v0.3.2.md) · [0.3.0 更新记录](docs/releases/v0.3.0.md) · [可选 App 壳诊断](tools/desktop-shell/README.md)。
 
 ## 许可
 

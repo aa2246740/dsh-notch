@@ -65,7 +65,8 @@ export class Board {
     if (typeof data.clientId !== 'string' || !Array.isArray(data.rows) || data.rows.length > 1000) return false
     const rows: SidebarRow[] = []
     for (const row of data.rows) {
-      if (!row || typeof row.id !== 'string' || !row.id.startsWith('session-') || typeof row.title !== 'string' || typeof row.completed !== 'boolean' || typeof row.running !== 'boolean') return false
+      // Session IDs are opaque; API-created conversations need no session- prefix.
+      if (!row || typeof row.id !== 'string' || row.id.length === 0 || typeof row.title !== 'string' || typeof row.completed !== 'boolean' || typeof row.running !== 'boolean') return false
       rows.push({ id: row.id, title: row.title.slice(0, 512), completed: row.completed, running: row.running,
         ...(typeof row.updatedAt === 'number' && Number.isFinite(row.updatedAt) ? { updatedAt: row.updatedAt } : {}) })
     }

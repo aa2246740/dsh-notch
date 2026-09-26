@@ -8,64 +8,57 @@ Installation has two parts: a **Host plugin inside DSH** that supplies session s
 
 ## Installation
 
-This branch targets official **DSH Desktop 0.1.7-rc.2** and keeps Web support. Use the official app’s Plugins page to install and enable the built package for Desktop. The CLI commands below are for Web only; do not use the CLI to mutate the Desktop-owned profile.
+**0.3.2 supports DeepSeek Harness 0.1.7-rc.2 Desktop and Web.** Opening a completed session in the foreground clears its Notch unread result. Clicking it in Notch opens the conversation in DSH.
 
-### Requirements
+### 1. Download the release
 
-- macOS 14 or later.
-- DeepSeek Harness `0.1.7-rc.2`. This package peers `@deepseek-ai/dsh` and the `@deepseek-ai/dsh-*` packages it imports at `>=0.1.7-rc.1 <0.1.8`. That range includes `0.1.7-rc.1` and `0.1.7-rc.2`.
-- A working local DSH Web Host, with `dsh`, `pnpm`, and `git` available in your terminal.
-- Swift 6 or later through Command Line Tools. Check with `swift --version`; use `xcode-select --install` if the developer tools are missing.
+Download from [v0.3.2](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.2):
 
-These instructions use the default `web` profile and `~/.dsh`. For a custom `DSH_HOME`, run plugin installation with that same environment and edit that Home's profile in step 2.
+| File | Purpose |
+| --- | --- |
+| `dsh-notch-0.3.2.tgz` | Host plugin for status, questions, and native connectivity |
+| `dsh-notch-focus-0.1.1.tgz` | Client companion for navigation and reading acknowledgements |
+| `dsh-notch-0.3.2-macos-arm64.tar.gz` | Native executable and robot resources; macOS 14+, Apple Silicon |
+| `SHA256SUMS` | Place beside the downloads and run `shasum -a 256 -c SHA256SUMS` |
 
-### 1. Download and install the Host plugin
+Prebuilt packages do not require Swift or DSHX. Other architectures require a source build and are not covered by this binary release.
 
-```sh
-git clone https://github.com/aa2246740/dsh-notch.git
-cd dsh-notch
-npm ci --ignore-scripts --legacy-peer-deps
-npm run build
-dsh plugin --profile web add "$PWD"
-```
+### 2. Install both plugin packages
 
-This links the local package into DSH's Web profile. Keep the checkout: it is also where you build the native application.
+**Official Desktop:** install both `.tgz` packages through the app's Plugins page, enable them, follow the app's loading instructions, then reopen the page. The app owns the Desktop profile.
 
-The warning `declares no dsh.bundle — installed as a plain dependency` is expected for this package. **Continue with step 2 to activate it.** The current package has no automatic bundle registration, so `plugin add` alone does not start Notch.
-
-If you run DSH from source without a global `dsh` command, run this from the Harness checkout, then return to the Notch checkout:
+**Web:** use the same `DSH_HOME` as the running Host, then run from your download directory:
 
 ```sh
-pnpm dsh plugin --profile web add /absolute/path/to/dsh-notch
+dsh plugin --profile web add "$PWD/dsh-notch-0.3.2.tgz"
+dsh plugin --profile web add "$PWD/dsh-notch-focus-0.1.1.tgz"
 ```
 
-### 2. Enable the Host plugin
+Both packages declare official `dsh.bundle.patch` entries. Follow the plugin manager's loading guidance and reopen the page. Do not add a second manual insert. Update existing entries when migrating older installations so a Bundle and an old manual patch do not mount the same plugin twice.
 
-Confirm DSH Notch is enabled in the Plugins page. The package includes its bundle patch; do not add a second same-name insert. Update the existing entry when migrating an older installation.
+A loaded Host writes `$DSH_HOME/dsh-notch/runtime.json`. This is a private connection file managed by the plugin; do not fill it in or share it. Check Host loading errors if it is absent.
 
-A loaded Host writes its private connection file to `$DSH_HOME/dsh-notch/runtime.json`. Do not fill in or share that file. Check plugin loading errors if it is absent. The native helper is installed separately below.
-
-### 3. Build and start the real Notch
-
-From the Notch checkout:
+### 3. Extract and start the native helper
 
 ```sh
-swift build --package-path macos -c release
-macos/.build/release/dsh-notch --verify-idle-resources
-macos/.build/release/dsh-notch
+tar -xzf dsh-notch-0.3.2-macos-arm64.tar.gz
+cd dsh-notch-0.3.2-macos-arm64
+./dsh-notch --verify-idle-resources
+./dsh-notch
 ```
 
-The resource check should print `IDLE_RESOURCES=10/10`. The last command starts the application connected to real DSH sessions. Keep this terminal open during the first run.
+The resource check should print `IDLE_RESOURCES=10/10`. Keep the terminal open for the first run. If a desktop launcher already manages a Notch helper, update that executable instead. Always keep `dsh-notch` and `DshNotch_DshNotch.bundle` together when moving them. A custom `DSH_HOME` must match the Host's Home.
 
-If your DSH.app already manages a Notch helper, update that copy instead of starting a duplicate. When moving the executable or integrating it into a desktop shell, keep `dsh-notch` and `DshNotch_DshNotch.bundle` from the same build together in the destination directory, then relaunch the helper. Installing the Host plugin does not configure login startup or replace a desktop shell's existing executable.
+Optionally set the Host plugin's `helperPath` configuration to the absolute path of the extracted executable and follow the app's plugin loading guidance. The Host then supervises that helper; do not also start another copy manually.
 
-### 4. Confirm it works
+### 4. Confirm synchronization
 
-- With no active work or unread results, the robot appears at the screen edge.
-- Existing running sessions produce a blue count; questions and results produce their corresponding states.
-- Clicking a session opens it in DSH. When a question appears, answer it directly in Notch.
+- Running primary sessions show a blue count; completions, failures, and questions show their corresponding states.
+- Clicking a Notch session opens the matching conversation in DSH.
+- Opening a completed session in foreground DSH clears that result from Notch. Running tasks remain visible.
+- Reading all results returns Notch to the idle robot.
 
-Use existing sessions for these checks; a new model task is unnecessary. Seeing the robot alone does not prove Host connectivity: confirm that real session state updates too.
+The native helper exits with its Host. Temporary request failures do not close it. Closing only the window keeps it alive if the Host still runs. See [desktop helper ownership](desktop/README.md) for lifecycle integration.
 
 ## Usage
 
@@ -106,10 +99,22 @@ The Host plugin requires `sessions`, `webServer`, `approval`, `userQuestions`, a
 
 After updating source, rebuild the native helper. Native-only changes require updating and relaunching Notch. Changes under `src/` also require the appropriate Host module activation.
 
-Maintainers using [dshx](https://github.com/aa2246740/dsh-external-plugin-devkit) can inspect `dshx activation-plan dsh-notch --change artifact` or `--change server`, according to the changed surface. Initial activation above uses a watched patch; restarting the whole Host does not replace a missing installation step.
+Maintainers using [dshx](https://github.com/aa2246740/dsh-external-plugin-devkit) can inspect `dshx activation-plan dsh-notch --change artifact` or `--change server`, according to the changed surface. Package synchronization and live activation are separate checks.
+
+Source builds require Node.js 24 and Swift 6 / Command Line Tools:
 
 ```sh
-npm ci
+npm ci --ignore-scripts --legacy-peer-deps
+npm run build
+npm run build:macos
+```
+
+See the [companion README](companions/dsh-notch-focus/README.md) for its RC2-targeted DSHX build. Release consumers do not need DSHX.
+
+Development checks:
+
+```sh
+npm ci --ignore-scripts --legacy-peer-deps
 npm test
 npm run test:outcome
 npm run test:motion
@@ -133,7 +138,7 @@ open "dist/DSH Notch Demo.app"
 
 The demo contains 36 bilingual scenes driven by local fixtures. It does not connect to DSH. See the [demo controls](tools/recording/README.md).
 
-More: [motion contracts](macos/STATUS-MOTION.md), [design notes](DESIGN.md), [0.3.0 changes](docs/releases/v0.3.0.md), and [optional desktop-shell diagnostics](tools/desktop-shell/README.md).
+More: [motion contracts](macos/STATUS-MOTION.md), [design notes](DESIGN.md), [0.3.2 changes](docs/releases/v0.3.2.md), [0.3.0 changes](docs/releases/v0.3.0.md), and [optional desktop-shell diagnostics](tools/desktop-shell/README.md).
 
 ## License
 

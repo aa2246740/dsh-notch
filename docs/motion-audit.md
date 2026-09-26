@@ -62,4 +62,4 @@ The tour disables only automatic action selection, retaining the real director t
 - 已替换本机 DSH.app 内的独立 helper 与资源；二进制 SHA-256 为 `dc5612a0c36133857f27892b8532151dadb5c71a1599cb407c3b472c004c2ba5`。旧二进制和资源已备份。演示进程关闭。
 - 新 helper PID 35639，确认到原 Host 43127 的 TCP 连接；只读状态请求 HTTP 200 / ok=true。DSH App PID 57838、Host PID 57873 均未变化，原生截图确认 DSH 页面正常显示。本轮未调用模型。
 - 原生 CUA 能检查 DSH.app，但无法选择无 app bundle 的独立 helper；因此本轮安装后机器人屏幕表现未通过 CUA 重新截图验收，动画证据为此前用户认可的演示与本轮原生渲染回归。
-- 本机安装与回滚证据：`/Users/wu/Documents/ChatGPT/dsgx/notch-install-proof/installation.json`、`previous-production/`、`host-status.json`。
+- 本机安装与回滚证据：本地验收目录中的 `installation.json`、`previous-production/`、`host-status.json`（不随仓库分发）。

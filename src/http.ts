@@ -41,6 +41,17 @@ export function browserTrusted(req: IncomingMessage): boolean {
   }
 }
 
+/** Accept same-origin Web writes and requests forwarded by the Desktop shell. */
+export function sidebarTrusted(req: IncomingMessage, origin: string): boolean {
+  if (!browserTrusted(req) || !req.headers['content-type']?.startsWith('application/json')) return false
+  if (req.headers.origin !== undefined) return true
+  // Desktop validates dsh-app://app, then removes Origin and fetch metadata.
+  // A script-only header still prevents a foreign page from submitting a form.
+  return req.headers['x-dsh-notch-client'] === '1'
+    && req.headers['sec-fetch-site'] === undefined
+    && req.headers.host === new URL(origin).host
+}
+
 function send(res: ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body)
   res.writeHead(status, {
@@ -100,8 +111,7 @@ export function attachHttp(ctx: Context, board: Board, token: string, origin: st
     }
 
     if (method === 'POST' && path === `${PREFIX}/sidebar`) {
-      // JSON, explicit same origin, and browser fetch metadata prevent cross-site writes.
-      if (!browserTrusted(req) || !req.headers.origin || !req.headers['content-type']?.startsWith('application/json')) {
+      if (!sidebarTrusted(req, origin)) {
         send(res, 403, { ok: false, error: 'forbidden' })
         return
       }

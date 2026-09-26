@@ -8,7 +8,7 @@ test('browser mirror keeps cold user forks and excludes all durable subagents', 
   const sent = [], disposers = []
   const rows = [
     { id: 'session-root', displayTitle: 'Root', running: true },
-    { id: 'session-user-fork', parentId: 'session-root', displayTitle: 'User fork', running: false, completed: true, updatedAt: 100 },
+    { id: 'session-user-fork', parentId: 'session-root', displayTitle: 'User fork', running: false, retainedBy: { mainView: 1 }, updatedAt: 100 },
     { id: 'session-seeded-agent', parentId: 'session-root', origin: 'subagent', displayTitle: 'Delegated fork', running: true },
     { id: 'session-orphan-agent', origin: 'subagent', displayTitle: 'Unloaded parent', running: true },
   ]
@@ -20,15 +20,18 @@ test('browser mirror keeps cold user forks and excludes all durable subagents', 
   }
   try {
     const before = Date.now()
+    const sessions = {
+      list: { getSnapshot: () => ({ phase: 'ready', ids: rows.map(r => r.id), byId: Object.fromEntries(rows.map(r => [r.id, r])) }) },
+      refresh: async () => {},
+    }
     apply({
-      sessions: {
-        list: { getSnapshot: () => ({ phase: 'ready', current: 'session-user-fork', ids: rows.map(r => r.id), byId: Object.fromEntries(rows.map(r => [r.id, r])) }) },
-        open() {}, refresh: async () => {},
-      },
+      get: name => name === 'sessions' ? sessions : undefined,
+      uiSession: { sessionStatus: { getSnapshot: () => new Map([['session-user-fork', { completionUnread: true }]]) } },
       effect: setup => { disposers.push(setup()) },
     })
     await new Promise(resolve => setImmediate(resolve))
     assert.equal(sent.length, 1)
+    assert.equal(sent[0].rows.find(row => row.id === 'session-user-fork').completed, true)
     assert.equal(sent[0].viewed.id, 'session-user-fork')
     assert.ok(sent[0].viewed.at >= before && sent[0].viewed.at <= Date.now(), 'reading time is independent of the much older prompt timestamp')
     const board = new Board({ sessions: { list: () => [] }, agents: { get() {} }, get() {}, logger: { warn() {} } })
