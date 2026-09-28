@@ -1,12 +1,12 @@
 {
-  "name": "dsh-notch",
-  "description": "DSH Notch for Claude Code CLI and Desktop.",
+  "name": "bot-notch",
+  "description": "Bot Notch: a native macOS notch for Claude Code CLI and Desktop.",
   "owner": { "name": "aa2246740" },
   "plugins": [
     {
-      "name": "dsh-notch",
+      "name": "bot-notch",
       "source": "./claude-code",
-      "description": "Show Claude Code sessions, permission prompts and questions in the native macOS DSH Notch."
+      "description": "Show Claude Code sessions, permission prompts and questions in a native macOS notch."
     }
   ]
 }

@@ -2,7 +2,8 @@
 /**
  * Local stand-in for the DSH Host plugin. Claude Code hooks post session events
  * here, and the unchanged native Notch helper reads the same /dsh-notch/* HTTP
- * contract it reads from DSH, located through DSH_NOTCH_RUNTIME_FILE.
+ * contract it reads from DSH, located through DSH_NOTCH_RUNTIME_FILE. Those two
+ * names belong to the helper's protocol and stay as they are.
  *
  * One bridge per user. It exits once no Claude Code process it tracks is alive,
  * and the helper (which follows the runtime file's pid) exits with it.
@@ -16,7 +17,7 @@ import { superviseNotch } from './lib/notch-lifecycle.mjs'
 import { BUNDLE_ID, alive, ensureDir, paths, readJson, writePrivateJson } from './lib/runtime.mjs'
 
 const PREFIX = '/dsh-notch'
-const IDLE_EXIT_MS = Number(process.env.DSH_NOTCH_IDLE_EXIT_MS) || 60_000
+const IDLE_EXIT_MS = Number(process.env.BOT_NOTCH_IDLE_EXIT_MS) || 60_000
 const PRUNE_MS = 2_000
 const SEEN_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -24,7 +25,7 @@ const files = paths()
 ensureDir(files.dir)
 
 function log(text) {
-  process.stderr.write(`[dsh-notch bridge ${new Date().toISOString()}] ${text}\n`)
+  process.stderr.write(`[bot-notch bridge ${new Date().toISOString()}] ${text}\n`)
 }
 
 /** Single instance: an exclusive lock file naming its live owner. */
@@ -230,7 +231,7 @@ server.listen(0, '127.0.0.1', () => {
   writePrivateJson(files.runtime, { origin, token, pid: process.pid, writtenAt: Date.now(), source: 'claude-code' })
   log(`listening on ${origin}`)
 
-  const helperPath = process.env.CLAUDE_PLUGIN_OPTION_HELPER_PATH || process.env.DSH_NOTCH_HELPER || ''
+  const helperPath = process.env.CLAUDE_PLUGIN_OPTION_HELPER_PATH || process.env.BOT_NOTCH_HELPER || ''
   if (helperPath) {
     if (!existsSync(helperPath)) log(`configured helper does not exist: ${helperPath}`)
     else {

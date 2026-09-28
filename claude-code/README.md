@@ -1,11 +1,11 @@
-# DSH Notch for Claude Code
+# Bot Notch for Claude Code
 
-This plugin shows Claude Code CLI and Desktop sessions in the same native Notch that DSH uses. Running sessions, permission prompts, AskUserQuestion questions, and unread results appear at the screen edge. You can approve, reject, or answer from Notch, and clicking a session brings its terminal or app to the front.
+Bot Notch shows Claude Code CLI and Desktop sessions in a native macOS notch (the same helper app as DSH Notch). Running sessions, permission prompts, AskUserQuestion questions, and unread results appear at the screen edge. You can approve, reject, or answer from Notch, and clicking a session brings its terminal or app to the front.
 
 The native helper is unchanged. The plugin runs a small local bridge that serves the same `/dsh-notch/*` HTTP contract as the DSH Host plugin. The helper finds the bridge through `DSH_NOTCH_RUNTIME_FILE`.
 
 ```
-Claude Code hooks ──► hook.mjs ──► bridge.mjs (127.0.0.1, token) ◄── dsh-notch native helper
+Claude Code hooks ──► hook.mjs ──► bridge.mjs (127.0.0.1, token) ◄── native helper (dsh-notch executable)
  (SessionStart / UserPromptSubmit / PermissionRequest / Stop / StopFailure / SessionEnd …)
 ```
 
@@ -18,7 +18,7 @@ Requirements: macOS 14+ on Apple Silicon (for the native helper), Node.js 18+ on
 
    ```
    /plugin marketplace add aa2246740/dsh-notch
-   /plugin install dsh-notch@dsh-notch
+   /plugin install bot-notch@bot-notch
    ```
 
    For local development, use `claude --plugin-dir ./claude-code` instead.
@@ -29,7 +29,7 @@ The Code tab in Claude Desktop runs the same Claude Code and reads the same user
 To start the helper yourself instead, leave `helper_path` empty and run:
 
 ```sh
-DSH_NOTCH_RUNTIME_FILE="$HOME/.claude/dsh-notch/runtime.json" ./dsh-notch
+DSH_NOTCH_RUNTIME_FILE="$HOME/.claude/bot-notch/runtime.json" ./dsh-notch
 ```
 
 ## Behavior
@@ -51,7 +51,7 @@ DSH_NOTCH_RUNTIME_FILE="$HOME/.claude/dsh-notch/runtime.json" ./dsh-notch
 
 ## Files
 
-Default location `~/.claude/dsh-notch/` (follows `CLAUDE_CONFIG_DIR`; override with `DSH_NOTCH_CLAUDE_HOME`):
+Default location `~/.claude/bot-notch/` (follows `CLAUDE_CONFIG_DIR`; override with `BOT_NOTCH_HOME`). The helper executable is still called `dsh-notch`, and `/dsh-notch/*` and `DSH_NOTCH_RUNTIME_FILE` are the helper's protocol names, so they keep the old spelling.
 
 | File | Purpose |
 | --- | --- |
@@ -63,7 +63,7 @@ The bridge listens on 127.0.0.1 only, and every endpoint requires the Bearer tok
 
 ## Known limitations
 
-- Running DSH and Claude Code at the same time shows two Notches (each helper follows its own runtime file).
+- **Alongside an existing DSH Notch install:** files, ports and settings do not collide (`~/.dsh/dsh-notch/` vs `~/.claude/bot-notch/`, each with its own random port and token). But while DSH and Claude Code both run, two helper windows open at the same screen position and overlap, and the hidden-at-edge state is shared between them. If DSH itself launches Claude Code as a child, that child also shows up in Bot Notch as a separate session.
 - `PermissionRequest` does not fire for network requests from sandboxed commands, so those still have to be answered in Claude Code.
 - The helper's "open DSH" action is a no-op when DSH is not running. The Claude Code terminal or app is activated by the bridge.
 - Changing `helper_path` takes effect after all Claude Code sessions exit and the bridge restarts.

@@ -249,7 +249,7 @@ export class ClaudeBoard {
     this.markSeen(held.sessionId, this.now(), false)
     return this.release(id, outcome === 'allowed-once'
       ? { behavior: 'allow' }
-      : { behavior: 'deny', message: 'The user rejected this tool call from DSH Notch.' })
+      : { behavior: 'deny', message: 'The user rejected this tool call from Bot Notch.' })
   }
 
   answerAsk(id, answers) {

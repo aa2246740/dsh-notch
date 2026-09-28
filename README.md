@@ -82,13 +82,13 @@ Notch 使用原生 AppKit / SwiftUI / Canvas 渲染。动画本身不调用模�
 
 外部 Codex、Claude Code、ACP、DSH SDK 子代理转入官方后台任务后，也会归到所属主对话。Notch 只读取状态，不消费后台任务的完成通知。浏览器跳转和未加载会话的同步由 [dsh-notch-focus 助手](companions/dsh-notch-focus/README.md)提供；已有安装保留原目录更新即可。入口、取消与恢复路径的检查范围见[源码兼容性审计](docs/subagent-compatibility.md)。
 
-## Claude Code CLI / Desktop 插件
+## Bot Notch：Claude Code CLI / Desktop 插件
 
 同一个原生 Notch 也可以显示 Claude Code 的会话、权限确认和 AskUserQuestion，并在面板里直接作答。插件位于 [`claude-code/`](claude-code/README.md)，本仓库本身就是插件市场：
 
 ```
 /plugin marketplace add aa2246740/dsh-notch
-/plugin install dsh-notch@dsh-notch
+/plugin install bot-notch@bot-notch
 ```
 
 原生 helper 不需要改动；插件用本地 bridge 提供相同的 `/dsh-notch/*` 接口。详见 [插件说明](claude-code/README.md)。

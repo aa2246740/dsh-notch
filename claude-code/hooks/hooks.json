@@ -1,5 +1,5 @@
 {
-  "description": "Feed Claude Code session state, permission prompts and AskUserQuestion to the native DSH Notch helper.",
+  "description": "Feed Claude Code session state, permission prompts and AskUserQuestion to the native Bot Notch helper.",
   "hooks": {
     "SessionStart": [
       { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs"], "timeout": 10 }] }

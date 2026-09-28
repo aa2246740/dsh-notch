@@ -60,7 +60,7 @@ async function ensureBridge({ start }) {
 }
 
 function approvalWaitMs() {
-  const raw = process.env.CLAUDE_PLUGIN_OPTION_APPROVAL_WAIT_SECONDS ?? process.env.DSH_NOTCH_APPROVAL_WAIT_SECONDS
+  const raw = process.env.CLAUDE_PLUGIN_OPTION_APPROVAL_WAIT_SECONDS ?? process.env.BOT_NOTCH_APPROVAL_WAIT_SECONDS
   const seconds = raw === undefined || raw === '' ? 300 : Number(raw)
   return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 3300) * 1000 : 0
 }

@@ -5,11 +5,11 @@ import { basename, join } from 'node:path'
 
 /**
  * Fixed, user-visible location so a manually started helper can be pointed at
- * it: DSH_NOTCH_RUNTIME_FILE="$HOME/.claude/dsh-notch/runtime.json".
+ * it: DSH_NOTCH_RUNTIME_FILE="$HOME/.claude/bot-notch/runtime.json".
  */
 export function notchHome(env = process.env) {
-  if (env.DSH_NOTCH_CLAUDE_HOME) return env.DSH_NOTCH_CLAUDE_HOME
-  return join(env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'dsh-notch')
+  if (env.BOT_NOTCH_HOME) return env.BOT_NOTCH_HOME
+  return join(env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'bot-notch')
 }
 
 export function paths(env = process.env) {

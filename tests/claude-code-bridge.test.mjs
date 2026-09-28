@@ -23,7 +23,7 @@ function hook(env, input) {
 
 function setup(t, extra = {}) {
   const home = mkdtempSync(join(tmpdir(), 'notch-claude-'))
-  const env = { ...process.env, DSH_NOTCH_CLAUDE_HOME: home, DSH_NOTCH_IDLE_EXIT_MS: '400',
+  const env = { ...process.env, BOT_NOTCH_HOME: home, BOT_NOTCH_IDLE_EXIT_MS: '400',
     __CFBundleIdentifier: 'com.apple.Terminal', ...extra }
   delete env.CLAUDE_PLUGIN_OPTION_HELPER_PATH
   const runtime = () => JSON.parse(readFileSync(join(home, 'runtime.json'), 'utf8'))

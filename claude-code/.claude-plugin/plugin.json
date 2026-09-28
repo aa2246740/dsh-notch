@@ -1,8 +1,8 @@
 {
-  "name": "dsh-notch",
-  "displayName": "DSH Notch",
+  "name": "bot-notch",
+  "displayName": "Bot Notch",
   "version": "0.1.0",
-  "description": "Show Claude Code sessions, permission prompts and questions in the native macOS DSH Notch; answer them from the screen edge.",
+  "description": "Show Claude Code sessions, permission prompts and questions in a native macOS notch; answer them from the screen edge.",
   "author": { "name": "aa2246740" },
   "homepage": "https://github.com/aa2246740/dsh-notch/tree/main/claude-code",
   "repository": "https://github.com/aa2246740/dsh-notch",
