@@ -82,6 +82,17 @@ Counts represent user conversations. Workflow workers and nested subagents belon
 
 External Codex, Claude Code, ACP, and DSH SDK children registered as official background jobs also keep their owner active. Observation never consumes job completion notices. The [dsh-notch-focus companion](companions/dsh-notch-focus/README.md) handles browser navigation and cold-session mirroring; existing installations can keep their current directory. See the [source compatibility audit](docs/subagent-compatibility.md) for entry paths, cancellation, resumption, and verification limits.
 
+## Claude Code CLI / Desktop plugin
+
+The same native Notch can show Claude Code sessions, permission prompts, and AskUserQuestion, and answer them from the panel. The plugin lives in [`claude-code/`](claude-code/README.md); this repository is its marketplace:
+
+```
+/plugin marketplace add aa2246740/dsh-notch
+/plugin install dsh-notch@dsh-notch
+```
+
+The native helper is unchanged; a local bridge serves the same `/dsh-notch/*` contract. See the [plugin README](claude-code/README.md).
+
 ## Troubleshooting
 
 | Symptom | Check |

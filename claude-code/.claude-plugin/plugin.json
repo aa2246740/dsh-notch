@@ -1,0 +1,27 @@
+{
+  "name": "dsh-notch",
+  "displayName": "DSH Notch",
+  "version": "0.1.0",
+  "description": "Show Claude Code sessions, permission prompts and questions in the native macOS DSH Notch; answer them from the screen edge.",
+  "author": { "name": "aa2246740" },
+  "homepage": "https://github.com/aa2246740/dsh-notch/tree/main/claude-code",
+  "repository": "https://github.com/aa2246740/dsh-notch",
+  "license": "MIT",
+  "keywords": ["notch", "macos", "notifications", "permissions", "status"],
+  "userConfig": {
+    "helper_path": {
+      "type": "file",
+      "title": "Notch helper executable",
+      "description": "Absolute path to the extracted dsh-notch executable (keep DshNotch_DshNotch.bundle beside it). When set, the plugin starts and supervises the helper. Leave empty to start it yourself.",
+      "default": ""
+    },
+    "approval_wait_seconds": {
+      "type": "number",
+      "title": "Answer-from-Notch window (seconds)",
+      "description": "How long a permission prompt or AskUserQuestion stays answerable in Notch. Answering in Claude Code first always wins. 0 shows status only.",
+      "default": 300,
+      "min": 0,
+      "max": 3300
+    }
+  }
+}
