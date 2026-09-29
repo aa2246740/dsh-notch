@@ -225,10 +225,15 @@ struct EdgeDockFlight {
   let initial: [EdgeSpring]
   let target: EdgeDockPose
   let hidden: Bool
+  /// Size-changing flights morph the shell inside a fixed reserved canvas.
+  /// Their size channels run a slightly underdamped spring, so the bloom
+  /// keeps a touch of overshoot instead of stopping dead.
+  let sizing: Bool
   var values: [CGFloat] { [target.inward,target.down,target.width,target.height,target.conceal] }
   func transitions(dt: Double) -> [EdgeSpringTransition] {
     let x=EdgeSpringTransition(dt:dt,damping:hidden ? 0.90:0.60)
-    let y=EdgeSpringTransition(dt:dt), size=EdgeSpringTransition(dt:dt,damping:1)
+    let y=EdgeSpringTransition(dt:dt)
+    let size=EdgeSpringTransition(dt:dt,frequency:sizing ? 10 : 15,damping:sizing ? 0.72 : 1)
     return [x,y,size,size,size]
   }
   func state(at time: Double) -> [EdgeSpring] {
@@ -346,8 +351,13 @@ final class EdgeDockModel: NSObject, ObservableObject {
   func updateRest(_ size: CGSize) {
     let previous = restSize
     restSize = CGSize(width: max(1, size.width), height: max(1, size.height))
-    if !engaged { contentSize = restSize; pose = EdgeDockPose(width: restSize.width, height: restSize.height) }
-    else if settling && !hidden && previous != restSize { animate(to: shownPose) }
+    guard previous != restSize else { return }
+    if !engaged {
+      // A rest-size change rides the same fixed-canvas pipeline as a thrown
+      // drag release: one window resize, then the contour morphs inside it.
+      engaged = true
+      animate(to: shownPose)
+    } else if settling && !hidden { animate(to: shownPose) }
   }
   private var shownPose: EdgeDockPose { EdgeDockPose(width: restSize.width, height: restSize.height) }
 
@@ -428,6 +438,9 @@ final class EdgeDockModel: NSObject, ObservableObject {
   private func animate(to next: EdgeDockPose, velocity: CGSize? = nil, animated: Bool = true) {
     synchronizePresentation()
     let old = springs
+    // A retarget mid-morph keeps the sizing character; size-preserving throws
+    // (hide, restore, tuck) never inherit it.
+    let sizing = next.size != pose.size || (flight?.sizing ?? false)
     stop(); target = next
     let values = [pose.inward, pose.down, pose.width, pose.height, pose.conceal]
     springs = values.enumerated().map { index, value in
@@ -436,7 +449,7 @@ final class EdgeDockModel: NSObject, ObservableObject {
       return EdgeSpring(value: value, velocity: speed ?? inherited)
     }
     if !animated || reduceMotion { finish(); return }
-    flight = EdgeDockFlight(initial:springs,target:target,hidden:hidden)
+    flight = EdgeDockFlight(initial:springs,target:target,hidden:hidden,sizing:sizing)
     timeline = flight!.samples()
     elapsed = 0
     clockTime = CACurrentMediaTime()
@@ -495,6 +508,18 @@ final class EdgeDockModel: NSObject, ObservableObject {
     flight?.samples(interval:interval).map(\.pose) ?? [pose]
   }
   func flightTimeline() -> [EdgeDockSample] { EdgeDockFlight.compact(timeline) }
+  var flightIsSizing: Bool { flight?.sizing ?? false }
+  /// Largest shell the current flight passes through. Sizing flights lay the
+  /// content out once at this size; the body clip reveals it as the pose
+  /// morphs, instead of asking SwiftUI to relayout at every tick.
+  var flightCoverSize: CGSize {
+    var cover = pose.size
+    for sample in timeline {
+      cover.width = max(cover.width, sample.pose.width)
+      cover.height = max(cover.height, sample.pose.height)
+    }
+    return cover
+  }
 }
 
 struct EdgeDockGeometry {
@@ -596,18 +621,25 @@ struct EdgeDockGeometry {
 }
 
 extension NotchElasticFrame {
-  init(pose: EdgeDockPose, viewport: CGRect, cache: EdgeDockContourCache? = nil) {
+  init(pose: EdgeDockPose, viewport: CGRect, cache: EdgeDockContourCache? = nil, cover: CGSize? = nil) {
     let g = EdgeDockGeometry(pose:pose,cache:cache)
     var flip = CGAffineTransform(a:1,b:0,c:0,d:-1,tx:0,ty:viewport.height)
     outline = g.path(in:viewport).cgPath.copy(using:&flip)!
     translation = CGPoint(x:g.body.minX-viewport.minX,y:viewport.maxY-g.body.maxY)
+    body = CGRect(origin:translation,size:pose.size)
     deformation = g.tension.nativeBodyDeformation
     let t = min(1,max(0,(pose.conceal-0.25)/0.60))
     opacity = Double(1-t*t*(3-2*t))
-    let body = CGRect(origin:.zero,size:pose.size)
-    var bodyFlip = CGAffineTransform(a:1,b:0,c:0,d:-1,tx:0,ty:body.height)
+    // The clip rides the body's trailing-top corner of the cover-sized
+    // content, revealing it as the pose morphs.
+    let coverSize = cover ?? pose.size
+    let clip = CGRect(origin:.zero,size:pose.size)
+    var bodyFlip = CGAffineTransform(a:1,b:0,c:0,d:-1,tx:0,ty:clip.height)
     let trailing=g.radius*min(1,max(0,pose.inward)/16)
-    bodyClip = cache?.contour(size:pose.size,radius:g.radius,trailing:trailing).bodyClip ?? EdgeDockGeometry.shell(in:body,radius:g.radius,trailing:trailing).cgPath.copy(using:&bodyFlip)!
+    let clipPath = cache?.contour(size:pose.size,radius:g.radius,trailing:trailing).bodyClip
+      ?? EdgeDockGeometry.shell(in:clip,radius:g.radius,trailing:trailing).cgPath.copy(using:&bodyFlip)!
+    var place = CGAffineTransform(translationX:coverSize.width-pose.width,y:coverSize.height-pose.height)
+    bodyClip = clipPath.copy(using:&place) ?? clipPath
   }
 }
 
@@ -695,7 +727,9 @@ final class EdgeDockController: NSObject {
       // Content becomes transparent/off-screen during retraction; the window's
       // visible cap, rather than that content view, owns the animation clock.
       let link = panel.displayLink(target:target,selector:selector)
-      link.preferredFrameRateRange = CAFrameRateRange(minimum:60,maximum:60,preferred:60)
+      // ProMotion panels can render every frame; capping at 60 stutters the
+      // contour morph on 120 Hz displays.
+      link.preferredFrameRateRange = CAFrameRateRange(minimum:60,maximum:120,preferred:120)
       return link
     }
     dock.onFrame = { [weak self] in self?.render() }
@@ -818,15 +852,21 @@ final class EdgeDockController: NSObject {
     }
     var flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: b.height)
     panel.elasticMask(dock.engaged ? g.path(in:b).cgPath.copy(using:&flip) : nil)
-    let contentFrame = dock.engaged ? CGRect(x:g.body.minX-b.minX,y:b.maxY-g.body.maxY,width:g.body.width,height:g.body.height) : nil
+    // Size-changing flights lay the content out once at the largest shell
+    // the trajectory passes through, pinned to the body's trailing-top
+    // corner. Size-preserving flights keep the original body-fitting frame.
+    let cover = dock.flightIsSizing ? dock.flightCoverSize : g.body.size
+    let contentFrame = dock.engaged
+      ? CGRect(x:g.body.maxX-b.minX-cover.width,y:b.maxY-g.body.minY-cover.height,width:cover.width,height:cover.height)
+      : nil
     panel.positionMotionContent(contentFrame,opacity:dock.engaged ? dock.contentOpacity : 1,
                                 trailingRadius:g.radius * min(1,max(0,dock.pose.inward)/16),
                                 deformation:dock.engaged ? g.tension.nativeBodyDeformation : .identity)
     flightRevision = dock.flightRevision
-    if dock.settling && dock.automaticTicks && dock.pose.size == dock.targetPose.size {
+    if dock.settling && dock.automaticTicks {
       let samples = dock.flightTimeline()
-      if samples.count > 1 && samples.allSatisfy({ $0.pose.size == dock.pose.size }) {
-        let frames = samples.map { NotchElasticFrame(pose:$0.pose,viewport:b,cache:contourCache) }
+      if samples.count > 1 && (dock.flightIsSizing || samples.allSatisfy({ $0.pose.size == dock.pose.size })) {
+        let frames = samples.map { NotchElasticFrame(pose:$0.pose,viewport:b,cache:contourCache,cover:cover) }
         compositorBegan = CACurrentMediaTime()
         dock.startPresentation(at:compositorBegan)
         panel.startElasticFlight(frames:frames,times:samples.map(\.time),began:compositorBegan)

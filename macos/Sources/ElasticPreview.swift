@@ -56,7 +56,10 @@ final class ElasticPreviewDelegate: NSObject, NSApplicationDelegate, NSWindowDel
     controller.observeAttention(in:model)
     controller.onBegin = { [weak self] in self?.model.isPillHovered = false }
     dock.onHidden = { [weak self] hidden in self?.model.visuallyDocked = hidden }
-    dock.onSettled = { [weak self] hidden in if hidden { self?.model.expanded = false } }
+    dock.onSettled = { [weak self] hidden in
+      if hidden { self?.model.expanded = false }
+      else { self?.model.collapseSettled() }
+    }
     Publishers.CombineLatest3(model.$currentIslandWidth, model.$currentIslandHeight, model.$expanded)
       .receive(on: DispatchQueue.main).sink { [weak self] width, height, expanded in
         guard let self else { return }
