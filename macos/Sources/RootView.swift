@@ -78,9 +78,11 @@ final class BoardModel: ObservableObject {
   @Published var expanded = false {
     didSet { syncShowingExpanded(from: oldValue) }
   }
-  /// Content lags collapse so the window can shrink before lamps replace the panel.
+  /// Content lags collapse so the shell can absorb the panel before lamps
+  /// replace it. The swap is driven by the collapse flight's own settle.
   @Published var showingExpanded = false
   private var contentFold: DispatchWorkItem?
+  private var collapseLatched = false
   @Published var selected: String?
   @Published var hovered: String?
   @Published var wizard: AskWizard?
@@ -123,6 +125,7 @@ final class BoardModel: ObservableObject {
     contentFold?.cancel()
     contentFold = nil
     if expanded {
+      collapseLatched = false
       showingExpanded = true
       return
     }
@@ -130,12 +133,20 @@ final class BoardModel: ObservableObject {
       showingExpanded = false
       return
     }
-    let work = DispatchWorkItem { [weak self] in
-      guard let self, !self.expanded else { return }
-      self.showingExpanded = false
-    }
+    collapseLatched = true
+    let work = DispatchWorkItem { [weak self] in self?.collapseSettled() }
     contentFold = work
-    DispatchQueue.main.asyncAfter(deadline: .now() + NotchGeometryAnimation.duration, execute: work)
+    DispatchQueue.main.asyncAfter(deadline: .now() + NotchGeometryAnimation.foldDelay, execute: work)
+  }
+
+  /// The dock reports the collapse flight settled (or the fallback timer
+  /// fired): only then does the capsule's own content swap back in, so the
+  /// contracting black body visibly absorbs the panel instead of masking a
+  /// mid-flight layout swap.
+  func collapseSettled() {
+    guard collapseLatched else { return }
+    collapseLatched = false
+    if !expanded { showingExpanded = false }
   }
   var foldEnabled = false
   private var revealed = false
@@ -368,7 +379,7 @@ final class BoardModel: ObservableObject {
     pendingDecisionReturnCount=nil
     guard !needsAction,busyCount > 0,orbitLayout.decision > 0.001 else {return}
     let now=Date()
-    let began=now.addingTimeInterval(showingExpanded ? NotchGeometryAnimation.duration:0)
+    let began=now.addingTimeInterval(showingExpanded ? NotchGeometryAnimation.foldDelay:0)
     let travelling=orbitLayout.middle > 0.001 || orbitLayout.top > 0.001
     let startAngle=travelling ? decisionAngle(at:began):(-Double.pi/2)
     let reply=DecisionReturn(startedAt:began,busyBefore:count,from:orbitLayout,angle:startAngle)
@@ -645,8 +656,9 @@ struct RootView: View {
 
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
-  // Apple Dynamic Island fluid spring: crisp, elastic, settles fast
-  private let morphAnimation = Animation.spring(response: 0.32, dampingFraction: 0.78)
+  // Rows entrance-stagger only when the expanded surface just appeared; the
+  // flag resets on unmount so the next bloom plays it again.
+  @State private var rowsAppeared = false
 
   private var restCapsuleHeight: CGFloat {
     let base = model.orbitLayout.height + 24
@@ -715,15 +727,17 @@ struct RootView: View {
             .frame(width: panelSize.width, alignment: .topLeading)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             .opacity(model.expanded ? 1 : 0)
-            .animation(.easeOut(duration: 0.16), value: model.expanded)
+            .animation(model.expanded ? NotchMotion.fadeIn.delay(0.08) : NotchMotion.merge, value: model.expanded)
             .clipped()
         } else {
           compactPillContent
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .transition(.opacity)
         }
       }
       .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topTrailing)
       .clipShape(shellShape)
+      .animation(NotchMotion.fadeIn, value: model.showingExpanded)
     }
     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topTrailing)
     // The native panel owns geometry animation; its body fills the same bounds.
@@ -753,6 +767,8 @@ struct RootView: View {
           Color.clear.preference(key: ContentHeightPreferenceKey.self, value: geo.size.height)
         })
     }
+    .onAppear { rowsAppeared = true }
+    .onDisappear { rowsAppeared = false }
   }
 
   // MARK: - Rest Capsule Content (Live Multi-Thread Activity Cockpit)
@@ -777,7 +793,7 @@ struct RootView: View {
         }
       }
       .scaleEffect(model.isPillHovered && (model.needsAction || model.anyFailed || model.completedUnreadCount > 0 || model.busyCount > 0 || model.statusFlight != nil) ? 1.08 : 1.0)
-      .animation(morphAnimation, value: model.isPillHovered)
+      .animation(NotchMotion.quick, value: model.isPillHovered)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
       .contentShape(Rectangle())
     }
@@ -1062,7 +1078,7 @@ struct RootView: View {
           .padding(.vertical, 6)
       } else {
         VStack(spacing: 4) {
-            ForEach(model.rows) { row in
+            ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
               Button {
                 model.pick(row.id)
               } label: {
@@ -1116,6 +1132,12 @@ struct RootView: View {
                 )
               }
               .buttonStyle(.plain)
+              // Rows chase the shell: each one rises and fades in a beat
+              // after the previous, and sinks away just as the body absorbs
+              // the panel on collapse.
+              .opacity(model.expanded && rowsAppeared ? 1 : 0)
+              .offset(y: model.expanded && rowsAppeared ? 0 : 6)
+              .animation(NotchMotion.stagger(index), value: model.expanded && rowsAppeared)
             }
         }
       }
