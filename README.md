@@ -8,7 +8,7 @@
 
 ## 安装
 
-**0.3.2 正式适配 DeepSeek Harness 0.1.7-rc.2 Desktop / Web。** 在 DSH 前台打开已完成的会话，Notch 会同步清除未读结果；从 Notch 点击会话，也能回到 DSH。
+**0.3.2 正式适配 DeepSeek Harness 0.1.7 与 0.2.0-rc.1 Desktop / Web。** 在 DSH 前台打开已完成的会话，Notch 会同步清除未读结果；从 Notch 点击会话，也能回到 DSH。
 
 ### 1. 下载发布包
 

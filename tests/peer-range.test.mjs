@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-const RANGE = '>=0.1.7-rc.1 <0.1.8'
+const RANGE = '>=0.1.7-rc.1 <0.2.0 || >=0.2.0-rc.1 <0.3.0'
 const PEERS = [
   '@deepseek-ai/dsh',
   '@deepseek-ai/dsh-host-webserver',

@@ -8,7 +8,7 @@ Installation has two parts: a **Host plugin inside DSH** that supplies session s
 
 ## Installation
 
-**0.3.2 supports DeepSeek Harness 0.1.7-rc.2 Desktop and Web.** Opening a completed session in the foreground clears its Notch unread result. Clicking it in Notch opens the conversation in DSH.
+**0.3.2 supports DeepSeek Harness 0.1.7 and 0.2.0-rc.1 Desktop and Web.** Opening a completed session in the foreground clears its Notch unread result. Clicking it in Notch opens the conversation in DSH.
 
 ### 1. Download the release
 

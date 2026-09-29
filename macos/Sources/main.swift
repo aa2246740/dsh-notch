@@ -82,7 +82,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       self?.model.visuallyDocked = hidden
       UserDefaults.standard.set(hidden, forKey: "elastic-edge-hidden-v1")
     }
-    dock.onSettled = { [weak self] hidden in if hidden { self?.model.expanded = false } }
+    dock.onSettled = { [weak self] hidden in
+      if hidden { self?.model.expanded = false }
+      else { self?.model.collapseSettled() }
+    }
     updateHits()
     if UserDefaults.standard.bool(forKey: "elastic-edge-hidden-v1") { dock.setHidden(true, animated: false) }
     panel.orderFrontRegardless()
