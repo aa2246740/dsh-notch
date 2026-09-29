@@ -1,6 +1,6 @@
-# dsh-notch-focus 0.1.1
+# dsh-notch-focus 0.1.2
 
-DSH Notch 的客户端同步助手，正式适配 DeepSeek Harness **0.1.7-rc.2 Desktop / Web**。与 `dsh-notch` 0.3.2 同时更新。
+DSH Notch 的客户端同步助手。0.1.2 源码的 `@deepseek-ai/dsh-*` peer 为 `>=0.2.0-rc.1 <0.2.1`，对应 DeepSeek Harness **`dsh-v0.2.0-rc.2` Desktop / Web**，与 `dsh-notch` 0.3.3 同时更新。该范围接受 `0.2.0-rc.2` 和稳定版 `0.2.0`，拒绝 `0.2.0` alpha，也拒绝 `0.1.7-rc.2`。已发布的 0.1.1 包仍在 v0.3.2 Release 里。
 
 - 从 Notch 点击会话，通过 RC2 的 `uiWorkspace.openSession` 打开对话。
 - 从 RC2 `uiSession.sessionStatus` 读取未读完成状态，通过 `retainedBy.mainView` 识别当前会话。
@@ -22,7 +22,7 @@ dsh plugin --profile web add /absolute/path/to/dsh-notch-focus-0.1.1.tgz
 
 ## 从源码构建
 
-开发者需要 Node.js 24、DSHX 和已备好依赖的 **0.1.7-rc.2** Harness checkout。在本目录运行：
+开发者需要 Node.js 24、DSHX 0.9.2（git 分支，不用 npm 上的旧版）和已备好依赖的 **`dsh-v0.2.0-rc.2`** Harness checkout。在本目录运行：
 
 ```sh
 npm ci --ignore-scripts --legacy-peer-deps
@@ -33,6 +33,6 @@ DSHX_HARNESS=/absolute/path/to/deepseek-harness npm run build
 
 ## English
 
-The 0.1.1 companion supports DSH 0.1.7-rc.2 Desktop and Web with Notch 0.3.2. It uses `uiWorkspace.openSession`, `uiSession.sessionStatus`, and main-view retention for bidirectional navigation and timestamped reading acknowledgements. Inactive pages and running sessions cannot clear unread results. User forks remain independent; delegated subagents are excluded.
+The 0.1.2 companion source targets DSH `dsh-v0.2.0-rc.2` Desktop and Web with Notch 0.3.3. Its `@deepseek-ai/dsh-*` peer is `>=0.2.0-rc.1 <0.2.1`: that accepts `0.2.0-rc.2` and stable `0.2.0`, and rejects `0.2.0` alphas and `0.1.7-rc.2`. It uses `uiWorkspace.openSession`, `uiSession.sessionStatus`, and main-view retention for bidirectional navigation and timestamped reading acknowledgements. Inactive pages and running sessions cannot clear unread results. User forks remain independent; delegated subagents are excluded. The published 0.1.1 tarball remains on the v0.3.2 release.
 
 Install the prebuilt `.tgz` from the linked release using the Desktop Plugins page or the Web CLI above. Both plugins must use the same profile. The package supplies its Bundle patch; do not mount it again manually. Follow the manager's loading instructions and reopen the page. Client HMR in every Desktop variant is not claimed.

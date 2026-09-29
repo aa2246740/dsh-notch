@@ -8,7 +8,7 @@ Installation has two parts: a **Host plugin inside DSH** that supplies session s
 
 ## Installation
 
-**0.3.2 supports DeepSeek Harness 0.1.7-rc.2 Desktop and Web.** Opening a completed session in the foreground clears its Notch unread result. Clicking it in Notch opens the conversation in DSH.
+**0.3.3 source targets DeepSeek Harness `dsh-v0.2.0-rc.2`.** The `@deepseek-ai/dsh` peer is `>=0.2.0-rc.1 <0.2.1`: it accepts `0.2.0-rc.2` and stable `0.2.0`, and it rejects `0.2.0` alphas and `0.1.7-rc.2`. Opening a completed session in the foreground clears its Notch unread result. Clicking it in Notch opens the conversation in DSH. The download table below is still the published v0.3.2 release for 0.1.7-rc.2. This branch is not tagged, not published to npm, and has no new macOS visual proof.
 
 ### 1. Download the release
 
@@ -109,7 +109,7 @@ npm run build
 npm run build:macos
 ```
 
-See the [companion README](companions/dsh-notch-focus/README.md) for its RC2-targeted DSHX build. Release consumers do not need DSHX.
+See the [companion README](companions/dsh-notch-focus/README.md) for its DSHX 0.9.2 build against a `dsh-v0.2.0-rc.2` checkout. Release consumers do not need DSHX.
 
 Development checks:
 
@@ -138,7 +138,7 @@ open "dist/DSH Notch Demo.app"
 
 The demo contains 36 bilingual scenes driven by local fixtures. It does not connect to DSH. See the [demo controls](tools/recording/README.md).
 
-More: [motion contracts](macos/STATUS-MOTION.md), [design notes](DESIGN.md), [0.3.2 changes](docs/releases/v0.3.2.md), [0.3.0 changes](docs/releases/v0.3.0.md), and [optional desktop-shell diagnostics](tools/desktop-shell/README.md).
+More: [motion contracts](macos/STATUS-MOTION.md), [design notes](DESIGN.md), [0.3.3 changes](docs/releases/v0.3.3.md), [0.3.2 changes](docs/releases/v0.3.2.md), [0.3.0 changes](docs/releases/v0.3.0.md), and [optional desktop-shell diagnostics](tools/desktop-shell/README.md).
 
 ## License
 
