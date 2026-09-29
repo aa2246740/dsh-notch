@@ -8,7 +8,7 @@
 
 ## 安装
 
-**0.3.3 源码适配 DeepSeek Harness `dsh-v0.2.0-rc.1`。** `@deepseek-ai/dsh` peer 为 `>=0.2.0-rc.1 <0.2.1`：接受 `0.2.0-rc.1` 和稳定版 `0.2.0`，拒绝 `0.2.0` alpha，也拒绝 `0.1.7-rc.2`。在 DSH 前台打开已完成的会话，Notch 会同步清除未读结果；从 Notch 点击会话，也能回到 DSH。下面的下载表仍是已发布的 v0.3.2（0.1.7-rc.2）安装包。本分支不打 tag、不发布 npm，也没有新的 macOS 视觉验收。
+**0.3.3 源码适配 DeepSeek Harness `dsh-v0.2.0-rc.2`。** `@deepseek-ai/dsh` peer 为 `>=0.2.0-rc.1 <0.2.1`：接受 `0.2.0-rc.2` 和稳定版 `0.2.0`，拒绝 `0.2.0` alpha，也拒绝 `0.1.7-rc.2`。在 DSH 前台打开已完成的会话，Notch 会同步清除未读结果；从 Notch 点击会话，也能回到 DSH。下面的下载表仍是已发布的 v0.3.2（0.1.7-rc.2）安装包。本分支不打 tag、不发布 npm，也没有新的 macOS 视觉验收。
 
 ### 1. 下载发布包
 
@@ -111,7 +111,7 @@ npm run build
 npm run build:macos
 ```
 
-同步助手的源码构建需要 DSHX 0.9.2 和已备好依赖的 `dsh-v0.2.0-rc.1` Harness checkout；步骤见[助手说明](companions/dsh-notch-focus/README.md)。预编译发布包不需要这些开发工具。
+同步助手的源码构建需要 DSHX 0.9.2 和已备好依赖的 `dsh-v0.2.0-rc.2` Harness checkout；步骤见[助手说明](companions/dsh-notch-focus/README.md)。预编译发布包不需要这些开发工具。
 
 开发检查：
 
