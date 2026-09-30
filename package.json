@@ -1,7 +1,10 @@
 {
   "name": "dsh-notch",
-  "version": "0.3.3",
-  "private": true,
+  "version": "0.3.4",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "main": "lib/index.mjs",
   "description": "Native macOS notch for live DSH sessions, approvals, and model questions.",

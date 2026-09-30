@@ -8,30 +8,30 @@ Installation has two parts: a **Host plugin inside DSH** that supplies session s
 
 ## Installation
 
-**0.3.3 source targets DeepSeek Harness `dsh-v0.2.0-rc.2`.** The `@deepseek-ai/dsh` peer is `>=0.2.0-rc.1 <0.2.1`: it accepts `0.2.0-rc.2` and stable `0.2.0`, and it rejects `0.2.0` alphas and `0.1.7-rc.2`. Opening a completed session in the foreground clears its Notch unread result. Clicking it in Notch opens the conversation in DSH. The download table below is still the published v0.3.2 release for 0.1.7-rc.2. This branch is not tagged, not published to npm, and has no new macOS visual proof.
+**DSH Notch 0.3.4 supports official DeepSeek Harness `0.2.0-rc.2`.** Install `dsh-notch@0.3.4` and `dsh-notch-focus@0.1.2` from npm. The native macOS helper remains version 0.3.3 and is included in the release below. This release changes npm packaging and installation instructions; its runtime code matches 0.3.3.
 
 ### 1. Download the release
 
-Download from [v0.3.2](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.2):
+Download from [v0.3.4](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.4):
 
 | File | Purpose |
 | --- | --- |
-| `dsh-notch-0.3.2.tgz` | Host plugin for status, questions, and native connectivity |
-| `dsh-notch-focus-0.1.1.tgz` | Client companion for navigation and reading acknowledgements |
-| `dsh-notch-0.3.2-macos-arm64.tar.gz` | Native executable and robot resources; macOS 14+, Apple Silicon |
+| `dsh-notch-0.3.4.tgz` | Host plugin for status, questions, and native connectivity |
+| `dsh-notch-focus-0.1.2.tgz` | Client companion for navigation and reading acknowledgements |
+| `dsh-notch-0.3.3-macos-arm64.tar.gz` | Native executable and robot resources; macOS 14+, Apple Silicon |
 | `SHA256SUMS` | Place beside the downloads and run `shasum -a 256 -c SHA256SUMS` |
 
 Prebuilt packages do not require Swift or DSHX. Other architectures require a source build and are not covered by this binary release.
 
 ### 2. Install both plugin packages
 
-**Official Desktop:** install both `.tgz` packages through the app's Plugins page, enable them, follow the app's loading instructions, then reopen the page. The app owns the Desktop profile.
+**Official Desktop:** enter `dsh-notch@0.3.4` and `dsh-notch-focus@0.1.2` through the app's Plugins page, enable them, follow the app's loading instructions, then reopen the page. The app owns the Desktop profile.
 
 **Web:** use the same `DSH_HOME` as the running Host, then run from your download directory:
 
 ```sh
-dsh plugin --profile web add "$PWD/dsh-notch-0.3.2.tgz"
-dsh plugin --profile web add "$PWD/dsh-notch-focus-0.1.1.tgz"
+dsh plugin --profile web add dsh-notch@0.3.4
+dsh plugin --profile web add dsh-notch-focus@0.1.2
 ```
 
 Both packages declare official `dsh.bundle.patch` entries. Follow the plugin manager's loading guidance and reopen the page. Do not add a second manual insert. Update existing entries when migrating older installations so a Bundle and an old manual patch do not mount the same plugin twice.
@@ -41,8 +41,8 @@ A loaded Host writes `$DSH_HOME/dsh-notch/runtime.json`. This is a private conne
 ### 3. Extract and start the native helper
 
 ```sh
-tar -xzf dsh-notch-0.3.2-macos-arm64.tar.gz
-cd dsh-notch-0.3.2-macos-arm64
+tar -xzf dsh-notch-0.3.3-macos-arm64.tar.gz
+cd dsh-notch-0.3.3-macos-arm64
 ./dsh-notch --verify-idle-resources
 ./dsh-notch
 ```

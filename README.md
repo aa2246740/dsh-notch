@@ -8,30 +8,30 @@
 
 ## 安装
 
-**0.3.3 源码适配 DeepSeek Harness `dsh-v0.2.0-rc.2`。** `@deepseek-ai/dsh` peer 为 `>=0.2.0-rc.1 <0.2.1`：接受 `0.2.0-rc.2` 和稳定版 `0.2.0`，拒绝 `0.2.0` alpha，也拒绝 `0.1.7-rc.2`。在 DSH 前台打开已完成的会话，Notch 会同步清除未读结果；从 Notch 点击会话，也能回到 DSH。下面的下载表仍是已发布的 v0.3.2（0.1.7-rc.2）安装包。本分支不打 tag、不发布 npm，也没有新的 macOS 视觉验收。
+**DSH Notch 0.3.4 支持官方 DeepSeek Harness `0.2.0-rc.2`。** 从 npm 安装 `dsh-notch@0.3.4` 和 `dsh-notch-focus@0.1.2`。原生 macOS 程序继续使用 0.3.3，包含在下面的发布页中。本次只调整 npm 打包和安装说明，运行代码与 0.3.3 相同。
 
 ### 1. 下载发布包
 
-从 [v0.3.2 Release](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.2) 下载：
+从 [v0.3.4 Release](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.4) 下载：
 
 | 文件 | 用途 |
 | --- | --- |
-| `dsh-notch-0.3.2.tgz` | Host 插件，提供状态、问题和原生程序连接 |
-| `dsh-notch-focus-0.1.1.tgz` | 客户端同步助手，负责双向会话跳转与已读同步 |
-| `dsh-notch-0.3.2-macos-arm64.tar.gz` | macOS 14+、Apple Silicon 原生程序及机器人资源 |
+| `dsh-notch-0.3.4.tgz` | Host 插件，提供状态、问题和原生程序连接 |
+| `dsh-notch-focus-0.1.2.tgz` | 客户端同步助手，负责双向会话跳转与已读同步 |
+| `dsh-notch-0.3.3-macos-arm64.tar.gz` | macOS 14+、Apple Silicon 原生程序及机器人资源 |
 | `SHA256SUMS` | 下载校验；与上述文件放在同一目录后执行 `shasum -a 256 -c SHA256SUMS` |
 
 预编译包无需 Swift 或 DSHX。其他架构需从源码构建，尚未提供验收过的预编译包。
 
 ### 2. 在 DSH 安装两个插件包
 
-**官方 Desktop：** 在应用内插件管理页安装 Host 和同步助手的两个 `.tgz`，确认都已启用，按应用提示完成加载，再重新打开页面。Desktop profile 由应用管理。
+**官方 Desktop：** 在应用内插件管理页分别输入 `dsh-notch@0.3.4` 和 `dsh-notch-focus@0.1.2`，确认都已启用，按应用提示完成加载，再重新打开页面。Desktop profile 由应用管理。
 
 **Web：** 对运行中的 Host 使用相同的 `DSH_HOME`，在下载目录执行：
 
 ```sh
-dsh plugin --profile web add "$PWD/dsh-notch-0.3.2.tgz"
-dsh plugin --profile web add "$PWD/dsh-notch-focus-0.1.1.tgz"
+dsh plugin --profile web add dsh-notch@0.3.4
+dsh plugin --profile web add dsh-notch-focus@0.1.2
 ```
 
 两个包都声明了官方 `dsh.bundle.patch`。按插件管理器的提示加载，并重新打开页面；不要再手工追加同名 `insert`。已有安装应更新原条目，避免 Bundle 与旧手动配置重复挂载。
@@ -41,8 +41,8 @@ Host 加载后生成 `$DSH_HOME/dsh-notch/runtime.json`。这是插件管理的�
 ### 3. 解压并启动原生程序
 
 ```sh
-tar -xzf dsh-notch-0.3.2-macos-arm64.tar.gz
-cd dsh-notch-0.3.2-macos-arm64
+tar -xzf dsh-notch-0.3.3-macos-arm64.tar.gz
+cd dsh-notch-0.3.3-macos-arm64
 ./dsh-notch --verify-idle-resources
 ./dsh-notch
 ```
