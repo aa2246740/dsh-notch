@@ -1,44 +1,54 @@
 # DSH Notch
 
+[![npm version](https://img.shields.io/npm/v/dsh-notch)](https://www.npmjs.com/package/dsh-notch)
+
 [中文](README.md) · [English](README.en.md)
 
-**DSH Notch 是 DeepSeek Harness 的 macOS 插件。** 它把真实会话的运行状态、待回答问题和未读结果放在屏幕边缘：查看任务、直接回答问题、点击回到对应会话；空闲时显示待机机器人。
+**DSH Notch 是 DeepSeek Harness 的 macOS 插件，Notch 界面仅支持 macOS。** 它把真实会话的运行状态、待回答问题和未读结果放在屏幕边缘：查看任务、直接回答问题、点击回到对应会话；空闲时显示待机机器人。
 
 插件包含两部分：**装进 DSH 的 Host 插件**负责同步会话，**原生 Notch 程序**负责显示和交互。下面的安装步骤会装好这两部分。
 
 ## 安装
 
-**DSH Notch 0.3.4 支持官方 DeepSeek Harness `0.2.0-rc.2`。** 从 npm 安装 `dsh-notch@0.3.4` 和 `dsh-notch-focus@0.1.2`。原生 macOS 程序继续使用 0.3.3，包含在下面的发布页中。本次只调整 npm 打包和安装说明，运行代码与 0.3.3 相同。
+**仅 macOS：原生 Notch 程序需要 macOS 14+、Apple Silicon。** DSH Notch 0.3.4 支持官方 DeepSeek Harness `0.2.0-rc.2`。
 
-### 1. 下载发布包
+### 1. 在 DSH 安装两个插件包
 
-从 [v0.3.4 Release](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.4) 下载：
+#### 在 DeepSeek Harness 网页版或桌面端安装
 
-| 文件 | 用途 |
-| --- | --- |
-| `dsh-notch-0.3.4.tgz` | Host 插件，提供状态、问题和原生程序连接 |
-| `dsh-notch-focus-0.1.2.tgz` | 客户端同步助手，负责双向会话跳转与已读同步 |
-| `dsh-notch-0.3.3-macos-arm64.tar.gz` | macOS 14+、Apple Silicon 原生程序及机器人资源 |
-| `SHA256SUMS` | 下载校验；与上述文件放在同一目录后执行 `shasum -a 256 -c SHA256SUMS` |
+在 **添加插件** 向导的搜索框中分别填入 `dsh-notch` 和 `dsh-notch-focus`，点击 **Install**：
 
-预编译包无需 Swift 或 DSHX。其他架构需从源码构建，尚未提供验收过的预编译包。
+![Add plugin wizard](https://raw.githubusercontent.com/aa2246740/dsh-notch/main/docs/add-plugin-wizard.png)
 
-### 2. 在 DSH 安装两个插件包
+#### 使用 `dsh` 命令行安装
 
-**官方 Desktop：** 在应用内插件管理页分别输入 `dsh-notch@0.3.4` 和 `dsh-notch-focus@0.1.2`，确认都已启用，按应用提示完成加载，再重新打开页面。Desktop profile 由应用管理。
-
-**Web：** 对运行中的 Host 使用相同的 `DSH_HOME`，在下载目录执行：
+从 [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) 安装 [`dsh-notch`](https://www.npmjs.com/package/dsh-notch) 和 [`dsh-notch-focus`](https://www.npmjs.com/package/dsh-notch-focus) 插件：
 
 ```sh
-dsh plugin --profile web add dsh-notch@0.3.4
-dsh plugin --profile web add dsh-notch-focus@0.1.2
+dsh plugin --profile web add dsh-notch
+dsh plugin --profile web add dsh-notch-focus
 ```
+
+更新插件：
+
+```sh
+dsh plugin --profile web update dsh-notch@latest
+dsh plugin --profile web update dsh-notch-focus@latest
+```
+
+然后用 `dsh web` 启动 Web 界面。无需构建、无需重启。
+
+这条官方 CLI 命令只写入 `web` profile，不能修改 Desktop App 的 profile；桌面端请使用上面的应用内“添加插件”向导。
 
 两个包都声明了官方 `dsh.bundle.patch`。按插件管理器的提示加载，并重新打开页面；不要再手工追加同名 `insert`。已有安装应更新原条目，避免 Bundle 与旧手动配置重复挂载。
 
 Host 加载后生成 `$DSH_HOME/dsh-notch/runtime.json`。这是插件管理的私有连接文件，不需要填写或分享。找不到它时，先检查 Host 插件的加载错误。
 
-### 3. 解压并启动原生程序
+### 2. 下载并启动原生程序（仅 macOS）
+
+从 [v0.3.4 Release](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.4) 下载 `dsh-notch-0.3.3-macos-arm64.tar.gz`（macOS 14+、Apple Silicon 原生程序及机器人资源）和 `SHA256SUMS`（下载校验；与压缩包放在同一目录后执行 `shasum -a 256 -c SHA256SUMS`）。
+
+预编译包无需 Swift 或 DSHX。其他架构需从源码构建，尚未提供验收过的预编译包。发布页中的 `dsh-notch-0.3.4.tgz` 和 `dsh-notch-focus-0.1.2.tgz` 是第 1 步 npm 安装的离线替代，普通安装不需要下载。
 
 ```sh
 tar -xzf dsh-notch-0.3.3-macos-arm64.tar.gz
@@ -51,7 +61,7 @@ cd dsh-notch-0.3.3-macos-arm64
 
 可在 Host 插件配置中把 `helperPath` 设为已解压的 `dsh-notch` 的绝对路径，让插件随 Host 管理辅助进程；配置后按应用的插件加载提示生效。请勿同时手工启动另一份。
 
-### 4. 确认同步正常
+### 3. 确认同步正常
 
 - 正在运行的主会话显示蓝色计数；完成、失败或等待回答显示对应状态。
 - 点击 Notch 的会话，DSH 打开对应对话。
@@ -86,9 +96,9 @@ Notch 使用原生 AppKit / SwiftUI / Canvas 渲染。动画本身不调用模�
 
 | 现象 | 检查位置 |
 | --- | --- |
-| `plugin add` 成功，但没有 Notch | 第二步是否激活了 Host 插件，第三步是否启动了原生程序？两者都需要。 |
+| `plugin add` 成功，但没有 Notch | 第 1 步是否激活了 Host 插件，第 2 步是否启动了原生程序？两者都需要。 |
 | 只有机器人，真实任务不出现 | Host 插件是否加载、`runtime.json` 是否生成、当前 Host 是否仍在运行？ |
-| 找不到 `dsh-notch` 模块 | 确认第一步和第二步使用同一个 `DSH_HOME` 与 `web` profile；本地源码目录不能删除或移动。 |
+| 找不到 `dsh-notch` 模块 | 确认第 1 步和第 2 步使用同一个 `DSH_HOME` 与 `web` profile；本地源码目录不能删除或移动。 |
 | `IDLE_RESOURCES` 少于 `10/10` | 重新构建；移动程序时同时携带资源 bundle。 |
 | 屏幕上出现两个 Notch | 检查是否同时启动了手动版本和 App 壳管理的版本，只保留预期的那一份。 |
 | 更新源码后仍是旧效果 | 重新构建，并更新实际运行的可执行文件；只 `git pull` 不会替换已启动的原生进程。 |

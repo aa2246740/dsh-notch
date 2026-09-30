@@ -1,44 +1,54 @@
 # DSH Notch
 
+[![npm version](https://img.shields.io/npm/v/dsh-notch)](https://www.npmjs.com/package/dsh-notch)
+
 [中文](README.md) · [English](README.en.md)
 
-**DSH Notch is a macOS plugin for DeepSeek Harness.** It puts real session activity, questions, and unread results at the screen edge. Answer questions in the panel, open the matching DSH conversation, and watch the robot while idle.
+**DSH Notch is a macOS plugin for DeepSeek Harness; the Notch UI is macOS-only.** It puts real session activity, questions, and unread results at the screen edge. Answer questions in the panel, open the matching DSH conversation, and watch the robot while idle.
 
 Installation has two parts: a **Host plugin inside DSH** that supplies session state, and a **native Notch application** that displays it. Install both using the steps below.
 
 ## Installation
 
-**DSH Notch 0.3.4 supports official DeepSeek Harness `0.2.0-rc.2`.** Install `dsh-notch@0.3.4` and `dsh-notch-focus@0.1.2` from npm. The native macOS helper remains version 0.3.3 and is included in the release below. This release changes npm packaging and installation instructions; its runtime code matches 0.3.3.
+**macOS only: the native Notch helper requires macOS 14+ on Apple Silicon.** DSH Notch 0.3.4 supports official DeepSeek Harness `0.2.0-rc.2`.
 
-### 1. Download the release
+### 1. Install both plugin packages
 
-Download from [v0.3.4](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.4):
+#### Install on DeepSeek Harness web or desktop
 
-| File | Purpose |
-| --- | --- |
-| `dsh-notch-0.3.4.tgz` | Host plugin for status, questions, and native connectivity |
-| `dsh-notch-focus-0.1.2.tgz` | Client companion for navigation and reading acknowledgements |
-| `dsh-notch-0.3.3-macos-arm64.tar.gz` | Native executable and robot resources; macOS 14+, Apple Silicon |
-| `SHA256SUMS` | Place beside the downloads and run `shasum -a 256 -c SHA256SUMS` |
+Fill `dsh-notch` and `dsh-notch-focus` in the **Add plugin** wizard's search box, and click **Install**:
 
-Prebuilt packages do not require Swift or DSHX. Other architectures require a source build and are not covered by this binary release.
+![Add plugin wizard](https://raw.githubusercontent.com/aa2246740/dsh-notch/main/docs/add-plugin-wizard.png)
 
-### 2. Install both plugin packages
+#### Install with `dsh` cli
 
-**Official Desktop:** enter `dsh-notch@0.3.4` and `dsh-notch-focus@0.1.2` through the app's Plugins page, enable them, follow the app's loading instructions, then reopen the page. The app owns the Desktop profile.
-
-**Web:** use the same `DSH_HOME` as the running Host, then run from your download directory:
+Install [`dsh-notch`](https://www.npmjs.com/package/dsh-notch) and [`dsh-notch-focus`](https://www.npmjs.com/package/dsh-notch-focus) plugins from [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh):
 
 ```sh
-dsh plugin --profile web add dsh-notch@0.3.4
-dsh plugin --profile web add dsh-notch-focus@0.1.2
+dsh plugin --profile web add dsh-notch
+dsh plugin --profile web add dsh-notch-focus
 ```
+
+Or update the plugins:
+
+```sh
+dsh plugin --profile web update dsh-notch@latest
+dsh plugin --profile web update dsh-notch-focus@latest
+```
+
+Then start the web UI with `dsh web`. No build step, no restart.
+
+This official CLI command writes only the `web` profile; it cannot modify the Desktop App profile — use the in-app **Add plugin** wizard above for desktop.
 
 Both packages declare official `dsh.bundle.patch` entries. Follow the plugin manager's loading guidance and reopen the page. Do not add a second manual insert. Update existing entries when migrating older installations so a Bundle and an old manual patch do not mount the same plugin twice.
 
 A loaded Host writes `$DSH_HOME/dsh-notch/runtime.json`. This is a private connection file managed by the plugin; do not fill it in or share it. Check Host loading errors if it is absent.
 
-### 3. Extract and start the native helper
+### 2. Download and start the native helper (macOS only)
+
+Download `dsh-notch-0.3.3-macos-arm64.tar.gz` (native executable and robot resources; macOS 14+, Apple Silicon) and `SHA256SUMS` (place beside the download and run `shasum -a 256 -c SHA256SUMS`) from [v0.3.4](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.4).
+
+Prebuilt packages do not require Swift or DSHX. Other architectures require a source build and are not covered by this binary release. The `dsh-notch-0.3.4.tgz` and `dsh-notch-focus-0.1.2.tgz` on the release page are offline alternatives to the npm installs in step 1; a normal install does not need them.
 
 ```sh
 tar -xzf dsh-notch-0.3.3-macos-arm64.tar.gz
@@ -51,7 +61,7 @@ The resource check should print `IDLE_RESOURCES=10/10`. Keep the terminal open f
 
 Optionally set the Host plugin's `helperPath` configuration to the absolute path of the extracted executable and follow the app's plugin loading guidance. The Host then supervises that helper; do not also start another copy manually.
 
-### 4. Confirm synchronization
+### 3. Confirm synchronization
 
 - Running primary sessions show a blue count; completions, failures, and questions show their corresponding states.
 - Clicking a Notch session opens the matching conversation in DSH.
@@ -86,7 +96,7 @@ External Codex, Claude Code, ACP, and DSH SDK children registered as official ba
 
 | Symptom | Check |
 | --- | --- |
-| Package installed, but no Notch | Both Host activation in step 2 and native startup in step 3 are required. |
+| Package installed, but no Notch | Both Host activation in step 1 and native startup in step 2 are required. |
 | Robot appears, but tasks do not | Check Host plugin loading, `runtime.json`, and whether the current Host is still running. |
 | Cannot resolve `dsh-notch` | Use the same Home and profile for installation and activation; keep the linked source directory in place. |
 | Fewer than `10/10` resources | Rebuild and keep the resource bundle with the executable. |
