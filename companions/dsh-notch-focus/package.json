@@ -1,10 +1,19 @@
 {
   "name": "dsh-notch-focus",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Bidirectional session navigation and unread synchronization for DSH Desktop and Web 0.2.0-rc.2.",
   "type": "module",
   "main": "lib/dsh-notch-focus.js",
   "types": "lib/types/dsh-notch-focus.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aa2246740/dsh-notch",
+    "directory": "companions/dsh-notch-focus"
+  },
+  "homepage": "https://github.com/aa2246740/dsh-notch/tree/main/companions/dsh-notch-focus#readme",
+  "bugs": {
+    "url": "https://github.com/aa2246740/dsh-notch/issues"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json && tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit"
