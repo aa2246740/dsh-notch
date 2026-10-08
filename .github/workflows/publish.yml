@@ -38,7 +38,6 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-          cache: npm
 
       - name: Check tag matches package.json version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -56,8 +55,10 @@ jobs:
           npm ci --prefix "$H/tools/dshx" --ignore-scripts --no-audit --no-fund
           echo "DSHX_HARNESS=$H" >> "$GITHUB_ENV"
 
-      - run: npm ci --no-audit --no-fund
-      - run: npm ci --prefix companions/dsh-notch-focus --no-audit --no-fund
+      # package-lock.json files are currently out of sync with package.json,
+      # so `npm ci` refuses them; switch back to `npm ci` once they are refreshed.
+      - run: npm install --no-audit --no-fund
+      - run: npm install --prefix companions/dsh-notch-focus --no-audit --no-fund
       - run: npm run build
       - run: npm run build --prefix companions/dsh-notch-focus
       - run: npm test
