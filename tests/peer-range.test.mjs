@@ -39,7 +39,7 @@ test('Harness peer range accepts 0.2.0-rc.2 and stable 0.2.0', () => {
 
 test('focus companion uses the same Harness peer range', () => {
   const pkg = JSON.parse(readFileSync(new URL('../companions/dsh-notch-focus/package.json', import.meta.url), 'utf8'))
-  assert.equal(pkg.version, '0.1.2')
+  assert.equal(pkg.version, '0.1.3')
   for (const name of FOCUS_PEERS) {
     assert.equal(pkg.peerDependencies[name], RANGE)
     assert.equal(pkg.devDependencies[name], '0.2.0-rc.2')
