@@ -8,7 +8,7 @@ Installation has two parts: a **Host plugin inside DSH** that supplies session s
 
 ## Installation
 
-**DSH Notch 0.3.4 supports official DeepSeek Harness `0.2.0-rc.2`.** Install `dsh-notch@0.3.4` and `dsh-notch-focus@0.1.2` from npm. The native macOS helper remains version 0.3.3 and is included in the release below. This release changes npm packaging and installation instructions; its runtime code matches 0.3.3.
+**DSH Notch 0.3.7 source targets official DeepSeek Harness `0.2.1-rc.2`.** Peer and `engines.dsh` are `>=0.2.1-rc.1 <0.2.2` (same as DSHX 0.9.7). npm has not published 0.3.7 yet; installable packages remain `dsh-notch@0.3.4` / `dsh-notch-focus@0.1.2` (0.2.0-rc.*). The native macOS helper remains the existing 0.3.3 artifact; macOS visual proof stays on MacBook Air.
 
 ### 1. Download the release
 
@@ -109,7 +109,7 @@ npm run build
 npm run build:macos
 ```
 
-See the [companion README](companions/dsh-notch-focus/README.md) for its DSHX 0.9.2 build against a `dsh-v0.2.0-rc.2` checkout. Release consumers do not need DSHX.
+See the [companion README](companions/dsh-notch-focus/README.md) for its DSHX ≥0.9.7 build against a `dsh-v0.2.1-rc.2` checkout. Release consumers do not need DSHX.
 
 Development checks:
 
@@ -138,7 +138,7 @@ open "dist/DSH Notch Demo.app"
 
 The demo contains 36 bilingual scenes driven by local fixtures. It does not connect to DSH. See the [demo controls](tools/recording/README.md).
 
-More: [motion contracts](macos/STATUS-MOTION.md), [design notes](DESIGN.md), [0.3.3 changes](docs/releases/v0.3.3.md), [0.3.2 changes](docs/releases/v0.3.2.md), [0.3.0 changes](docs/releases/v0.3.0.md), and [optional desktop-shell diagnostics](tools/desktop-shell/README.md).
+More: [motion contracts](macos/STATUS-MOTION.md), [design notes](DESIGN.md), [0.3.7 changes](docs/releases/v0.3.7.md), [0.3.3 changes](docs/releases/v0.3.3.md), [0.3.2 changes](docs/releases/v0.3.2.md), [0.3.0 changes](docs/releases/v0.3.0.md), and [optional desktop-shell diagnostics](tools/desktop-shell/README.md).
 
 ## License
 

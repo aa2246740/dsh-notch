@@ -8,7 +8,7 @@
 
 ## 安装
 
-**DSH Notch 0.3.4 支持官方 DeepSeek Harness `0.2.0-rc.2`。** 从 npm 安装 `dsh-notch@0.3.4` 和 `dsh-notch-focus@0.1.2`。原生 macOS 程序继续使用 0.3.3，包含在下面的发布页中。本次只调整 npm 打包和安装说明，运行代码与 0.3.3 相同。
+**DSH Notch 0.3.7 源码支持官方 DeepSeek Harness `0.2.1-rc.2`。** peer 与 `engines.dsh` 为 `>=0.2.1-rc.1 <0.2.2`（与 DSHX 0.9.7 相同）。npm 尚未发布 0.3.7；当前可安装的包仍是 `dsh-notch@0.3.4` / `dsh-notch-focus@0.1.2`（0.2.0-rc.*）。原生 macOS 程序继续使用既有 0.3.3 产物，macOS 视觉验收另走 MacBook Air。
 
 ### 1. 下载发布包
 
@@ -111,7 +111,7 @@ npm run build
 npm run build:macos
 ```
 
-同步助手的源码构建需要 DSHX 0.9.2 和已备好依赖的 `dsh-v0.2.0-rc.2` Harness checkout；步骤见[助手说明](companions/dsh-notch-focus/README.md)。预编译发布包不需要这些开发工具。
+同步助手的源码构建需要 DSHX ≥0.9.7 和已备好依赖的 `dsh-v0.2.1-rc.2` Harness checkout；步骤见[助手说明](companions/dsh-notch-focus/README.md)。预编译发布包不需要这些开发工具。
 
 开发检查：
 
@@ -141,7 +141,7 @@ open "dist/DSH Notch Demo.app"
 
 Demo 提供 36 个中英双语场景，使用本地假任务，不连接 DSH。录屏控制与快捷键见 [Demo 文档](tools/recording/README.md)。
 
-更多：[动效说明](macos/STATUS-MOTION.md) · [设计说明](DESIGN.md) · [0.3.3 更新记录](docs/releases/v0.3.3.md) · [0.3.2 更新记录](docs/releases/v0.3.2.md) · [0.3.0 更新记录](docs/releases/v0.3.0.md) · [可选 App 壳诊断](tools/desktop-shell/README.md)。
+更多：[动效说明](macos/STATUS-MOTION.md) · [设计说明](DESIGN.md) · [0.3.7 更新记录](docs/releases/v0.3.7.md) · [0.3.3 更新记录](docs/releases/v0.3.3.md) · [0.3.2 更新记录](docs/releases/v0.3.2.md) · [0.3.0 更新记录](docs/releases/v0.3.0.md) · [可选 App 壳诊断](tools/desktop-shell/README.md)。
 
 ## 许可
 
