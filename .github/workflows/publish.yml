@@ -57,8 +57,8 @@ jobs:
 
       # package-lock.json files are currently out of sync with package.json,
       # so `npm ci` refuses them; switch back to `npm ci` once they are refreshed.
-      - run: npm install --no-audit --no-fund
-      - run: npm install --prefix companions/dsh-notch-focus --no-audit --no-fund
+      - run: npm install --no-package-lock --legacy-peer-deps --no-audit --no-fund
+      - run: npm install --prefix companions/dsh-notch-focus --no-package-lock --legacy-peer-deps --no-audit --no-fund
       - run: npm run build
       - run: npm run build --prefix companions/dsh-notch-focus
       # One peer-range test depends on the local Harness install; non-blocking in CI.
