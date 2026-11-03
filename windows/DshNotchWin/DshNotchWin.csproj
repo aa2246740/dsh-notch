@@ -43,7 +43,7 @@
   <!-- No-op when NotchWindow.cs already calls LongDetailSelftestFixture.
        Applies the two #4 call-site replacements when the 260KB window file
        could not be pushed over HTTPS from this worker. -->
-  <Target Name="WireLongDetailFixture" BeforeTargets="BeforeCompile">
+  <Target Name="WireLongDetailFixture" BeforeTargets="BeforeCompile" Condition="'$(OS)' == 'Windows_NT'">
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)Wire-LongDetailFixture.ps1&quot;" />
   </Target>
 

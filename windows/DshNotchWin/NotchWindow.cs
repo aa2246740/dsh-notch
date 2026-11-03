@@ -3179,20 +3179,8 @@ internal sealed class NotchWindow : Form
         ]}
         """;
 
-        // > 240 characters of detail: the panel stops hugging its content. The
-        // fixture has to be long enough to actually OVERFLOW the screen-capped
-        // panel (~500 CSS px of detail area at this DPI), otherwise the "scroll
-        // area" assertions below would pass on a region with nothing to scroll.
-        const string longDetailSnapshot = """
-        {"ok":true,"generatedAt":910005,"origin":"http://127.0.0.1:1","rows":[
-         {"id":"probe-ask","title":"probe asking session","child":false,"busy":false,"unread":false,
-          "ask":{"id":"ask-probe-3","questions":[
-            {"id":"q1","question":"这份计划可以吗？",
-             "detail":"# 迁移计划\n\n第一阶段把宿主插件层接到 Windows 的 WebView2 外壳上，第二阶段接通真实数据与几何动画，第三阶段做 AskUserQuestion 向导，第四阶段做 StatusOrbit 的四态笔画，第五阶段做待机机器人，第六阶段做安装、自启与卸载。每一阶段都要留下可复现的证据：自检项、截图与实测数字，而不是一句已经完成。第六阶段的卸载还要能一键回滚到未安装状态，且不在系统里留下任何残留文件与注册表项。安装脚本必须能在没有管理员权限的情况下完成接入，卸载脚本要恢复用户原有的 profile 配置备份，并保证重复执行是幂等的。\n\n宿主插件层与原生界面层之间只有一份契约：宿主在 webServer 上挂载前缀路由，并把运行时文件写给 helper，里面只有来源地址与一次性令牌。界面层不持有任何密钥，也不直接访问网络，所有副作用都由宿主进程代为执行。这样做的代价是每条交互都要多一次进程间往返，收益是令牌永远不会进入页面脚本，页面即使被注入也无法伪造宿主身份。\n\n几何动画由宿主的专用线程驱动，而不是由页面的 CSS 动画近似：显示器的刷新率是 240 赫兹，而系统定时器被固定在约 64 赫兹，用页面动画会在高刷新率屏幕上出现明显的台阶。逐帧直接调用窗口管理器接口，实测可以达到 220 到 450 赫兹，并且每一帧都能断言外侧边缘与顶部位置不变。\n\n窗口的透明与命中测试由窗口区域同时负责。早先用颜色键做透明时，外观完全正常，但整个窗口对鼠标透明，点击全部穿透到背后的应用，只有在关闭穿透的前提下用命中测试断言才能发现。因此视觉检查与命中测试必须分别断言，几何断言全绿并不等于画面正确。\n\n回答题目时宿主临时借用键盘焦点，用完立刻归还；面板在题目待回答期间不会自动折叠，否则用户刚把鼠标移开就会丢掉正在输入的内容。长文本的题目不再贴合内容高度，而是占满屏幕并把详情变成可滚动区域，保证选项按钮始终留在屏幕上。",
-             "options":[{"label":"可以"},{"label":"要改"}]}
-          ]}}
-        ]}
-        """;
+        // Long-detail probe JSON is built from the live work area by
+        // LongDetailSelftestFixture.BuildSnapshotJson, just before delivery.
 
         const string resolvedSnapshot = """
         {"ok":true,"generatedAt":910007,"origin":"http://127.0.0.1:1","rows":[
