@@ -84,7 +84,8 @@ if ($KeepRunning) {
 } elseif (-not $realUninstall) {
     Skip 'sandbox run (profile overridden) — the running capsule is left alone'
 } else {
-    $running = @(Get-Process -Name 'dsh-notch-win' -ErrorAction SilentlyContinue)
+    . (Join-Path $PSScriptRoot 'capsule-processes.ps1')
+    $running = @(Select-OwnedCapsuleProcess -ExePath $ExePath)
     if ($running.Count -gt 0) {
         Apply "stop the capsule (pid $(($running.Id) -join ', '))" { $running | Stop-Process -Force }
         if (-not $WhatIf) { Start-Sleep -Milliseconds 400 }

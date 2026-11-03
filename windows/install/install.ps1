@@ -103,7 +103,8 @@ if ($NoBuild) {
 # actually running.
 $defaultProfile = Join-Path $env:USERPROFILE '.dsh\profiles\web'
 $realInstall = ($ProfileRoot -eq $defaultProfile)
-$running = @(Get-Process -Name 'dsh-notch-win' -ErrorAction SilentlyContinue)
+. (Join-Path $PSScriptRoot 'capsule-processes.ps1')
+$running = @(Select-OwnedCapsuleProcess -ExePath $ExePath)
 if ($KeepRunning) {
     Skip 'capsule left running (-KeepRunning)'
 } elseif (-not $realInstall) {
@@ -154,8 +155,8 @@ $patchEntries = @(
         Name = './dsh-notch/windows/launcher/notch-launcher.ts'
         Note = @(
             '# dsh-notch-win 的启动项：DSH 启动时把胶囊拉起来（原先的 HKCU 登录自启已按用户要求删除）。',
-            '# 它只做「查进程 → 分离启动 → 忘记」；胶囊自己会等 Host 写出的 runtime.json 并自动重连，',
-            '# 所以 DSH 退出/重启都不需要收尾，也没有任何注册表写入。',
+            '# 它查进程后分离启动；插件卸载会取消还没发出的启动，并只在映像路径仍是本次拉起的胶囊时才结束它。',
+            '# 已经在跑、但不是这次拉起的胶囊不会被动到。没有注册表写入。',
             '# 不要重复插入，否则 duplicate loader entry id 启动失败。'
         )
     }

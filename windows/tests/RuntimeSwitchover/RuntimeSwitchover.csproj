@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="../../DshNotchWin/NotchClient.cs" Link="NotchClient.cs" />
+    <Compile Include="../../DshNotchWin/NotchModels.cs" Link="NotchModels.cs" />
+    <Compile Include="../../DshNotchWin/NativeMethods.cs" Link="NativeMethods.cs" />
+    <Compile Include="../../DshNotchWin/SseParser.cs" Link="SseParser.cs" />
+  </ItemGroup>
+</Project>

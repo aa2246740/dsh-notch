@@ -156,8 +156,12 @@ internal sealed class NotchClient : IDisposable
                     throw new IOException("event stream ended");
                 }
 
-                await Task.Delay(DegradedPollInterval, token).ConfigureAwait(false);
-                if (await FetchStatusAsync(token).ConfigureAwait(false)) streamHealthy = true;
+                // The catch below re-reads runtime.json once, then waits. A
+                // replacement Host usually writes the new port and token during
+                // that wait, or during the degraded poll itself. Every retry
+                // has to re-read the file; a failed status call must not keep
+                // the origin captured on the first failure.
+                if (await RetryWithFreshRuntimeAsync(token).ConfigureAwait(false)) streamHealthy = true;
             }
             catch (OperationCanceledException)
             {
@@ -171,8 +175,9 @@ internal sealed class NotchClient : IDisposable
                 TransportStateChanged?.Invoke($"stream failed ({_consecutiveStreamFailures}): {ex.GetType().Name} {ex.Message}");
 
                 // A dead Host usually means a REBUILT Host: the web server comes
-                // back on a new port and writes a new runtime.json, so re-read it
-                // before reconnecting instead of retrying a stale origin forever.
+                // back on a new port and writes a new runtime.json. Re-read it
+                // here, and again on every degraded retry below — the replacement
+                // file is often written after this first reload returns.
                 ReloadRuntime();
 
                 TimeSpan wait = ReconnectBackoff[Math.Min(_consecutiveStreamFailures - 1, ReconnectBackoff.Length - 1)];
@@ -198,6 +203,59 @@ internal sealed class NotchClient : IDisposable
         }
 
         _runtime = loaded;
+    }
+
+    /// <summary>
+    /// One degraded retry against whatever <c>runtime.json</c> says now.
+    /// Returns true when the event stream should be opened again: the status
+    /// poll succeeded, or the file now names a different origin or token than
+    /// the one this attempt started with.
+    /// </summary>
+    private async Task<bool> RetryWithFreshRuntimeAsync(CancellationToken token)
+    {
+        string previousOrigin = _runtime?.Origin ?? "";
+        string previousToken = _runtime?.Token ?? "";
+
+        ReloadRuntime();
+        if (RuntimeIdentityChanged(previousOrigin, previousToken))
+        {
+            RestartTransport();
+            return true;
+        }
+
+        await Task.Delay(DegradedPollInterval, token).ConfigureAwait(false);
+
+        ReloadRuntime();
+        if (RuntimeIdentityChanged(previousOrigin, previousToken))
+        {
+            RestartTransport();
+            return true;
+        }
+
+        if (await FetchStatusAsync(token).ConfigureAwait(false)) return true;
+
+        // The poll failed. The replacement file may have landed while the
+        // request to the old Host was timing out.
+        ReloadRuntime();
+        if (RuntimeIdentityChanged(previousOrigin, previousToken))
+        {
+            RestartTransport();
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool RuntimeIdentityChanged(string previousOrigin, string previousToken)
+    {
+        if (_runtime is null) return false;
+        return _runtime.Origin != previousOrigin || _runtime.Token != previousToken;
+    }
+
+    private void RestartTransport()
+    {
+        _consecutiveStreamFailures = 0;
+        Connected = false;
     }
 
     /// <summary>Consumes the SSE stream until it ends or the token fires.</summary>
