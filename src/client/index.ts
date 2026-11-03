@@ -93,7 +93,7 @@ export function apply(ctx: ClientContext): void {
       if (!stopped) timer = window.setTimeout(tick, POLL_MS)
     })
   }
-  let timer: ReturnType<typeof window.setTimeout> | undefined
+  let timer: number | ReturnType<typeof setTimeout> | undefined
   tick()
 
   ctx.effect(() => () => {

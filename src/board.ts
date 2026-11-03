@@ -70,7 +70,7 @@ export class Board {
       rows.push({ id: row.id, title: row.title.slice(0, 512), completed: row.completed, running: row.running,
         ...(typeof row.updatedAt === 'number' && Number.isFinite(row.updatedAt) ? { updatedAt: row.updatedAt } : {}) })
     }
-    const sessions = new Map(this.ctx.sessions.list().map(session => [session.id, session]))
+    const sessions = new Map<string, Session>(this.ctx.sessions.list().map(session => [session.id, session]))
     // Completion is a fact, not a page-local negative flag. A page that was
     // reloaded or selected a different conversation cannot retract another
     // page's reminder. Explicit, timestamped reading acknowledgements can.
