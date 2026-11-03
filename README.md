@@ -10,7 +10,7 @@
 
 ## 安装
 
-**仅 macOS：原生 Notch 程序需要 macOS 14+、Apple Silicon。** DSH Notch 0.3.4 支持官方 DeepSeek Harness `0.2.0-rc.2`。
+**仅 macOS：原生 Notch 程序需要 macOS 14+、Apple Silicon。** DSH Notch 0.3.7 支持官方 DeepSeek Harness `0.2.1-rc.5`。
 
 ### 1. 在 DSH 安装两个插件包
 
@@ -46,9 +46,9 @@ Host 加载后生成 `$DSH_HOME/dsh-notch/runtime.json`。这是插件管理的�
 
 ### 2. 下载并启动原生程序（仅 macOS）
 
-从 [v0.3.4 Release](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.4) 下载 `dsh-notch-0.3.3-macos-arm64.tar.gz`（macOS 14+、Apple Silicon 原生程序及机器人资源）和 `SHA256SUMS`（下载校验；与压缩包放在同一目录后执行 `shasum -a 256 -c SHA256SUMS`）。
+从 [v0.3.4 Release](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.4) 下载 `dsh-notch-0.3.3-macos-arm64.tar.gz`（macOS 14+、Apple Silicon 原生程序及机器人资源；原生包仍是 0.3.3，v0.3.7 发布页没有新的原生包）和 `SHA256SUMS`（下载校验；与压缩包放在同一目录后执行 `shasum -a 256 -c SHA256SUMS`）。
 
-预编译包无需 Swift 或 DSHX。其他架构需从源码构建，尚未提供验收过的预编译包。发布页中的 `dsh-notch-0.3.4.tgz` 和 `dsh-notch-focus-0.1.2.tgz` 是第 1 步 npm 安装的离线替代，普通安装不需要下载。
+预编译包无需 Swift 或 DSHX。其他架构需从源码构建，尚未提供验收过的预编译包。[v0.3.7 Release](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.7) 中的 `dsh-notch-0.3.7.tgz` 和 `dsh-notch-focus-0.1.5.tgz` 是第 1 步 npm 安装的离线替代，普通安装不需要下载。
 
 ```sh
 tar -xzf dsh-notch-0.3.3-macos-arm64.tar.gz
@@ -121,7 +121,7 @@ npm run build
 npm run build:macos
 ```
 
-同步助手的源码构建需要 DSHX 0.9.2 和已备好依赖的 `dsh-v0.2.0-rc.2` Harness checkout；步骤见[助手说明](companions/dsh-notch-focus/README.md)。预编译发布包不需要这些开发工具。
+同步助手的源码构建需要 DSHX 0.9.7 和已备好依赖的 `dsh-v0.2.1-rc.5` Harness checkout；步骤见[助手说明](companions/dsh-notch-focus/README.md)。预编译发布包不需要这些开发工具。
 
 开发检查：
 
