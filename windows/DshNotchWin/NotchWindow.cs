@@ -1720,14 +1720,11 @@ internal sealed class NotchWindow : Form
 
         if (longDetail)
         {
-            // Past the 240-character threshold with room to spare: the panel then
-            // fills the screen and this detail becomes its own scroll area.
-            for (int i = 0; i < 3; i++)
-            {
-                detail.Append("\n每一阶段都要留下可复现的证据：自检项、截图与实测数字，而不是一句已经完成。"
-                    + "卸载要能一键回滚到未安装状态，且不在系统里留下任何残留文件与注册表项。"
-                    + "安装脚本必须能在没有管理员权限的情况下完成接入，并保证重复执行是幂等的。\n");
-            }
+            // Past the 240-character threshold AND taller than the screen-capped
+            // panel at 100% DPI (a short pad filled 2560x1392 exactly).
+            NativeMethods.RECT work = WorkAreaAtEdge();
+            detail.Append('\n');
+            detail.Append(LongDetailSelftestFixture.BuildMarkdown(work.Bottom - work.Top));
         }
 
         var ask = new NotchAsk
@@ -3328,7 +3325,8 @@ internal sealed class NotchWindow : Form
                 typedDetail);
 
             // ── a long detail: fill the screen instead of hugging ────────
-            DeliverSnapshot(longDetailSnapshot);
+            NativeMethods.RECT fixtureWork = WorkAreaAtEdge();
+            DeliverSnapshot(LongDetailSelftestFixture.BuildSnapshotJson(fixtureWork.Bottom - fixtureWork.Top));
             await Task.Delay(500);
 
             NativeMethods.RECT longWork = WorkAreaAtEdge();

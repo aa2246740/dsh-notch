@@ -17,13 +17,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// Redirect the plugin's data files (homedir()/.dsh/dsh-notch) into a scratch
-// directory BEFORE importing the store, so the user's real seen.json is never
-// touched. os.homedir() reads HOME on POSIX and USERPROFILE on Windows.
+// Redirect the plugin's data files into a scratch directory BEFORE importing
+// the store. resolveDshHome() prefers DSH_HOME, which the unit runner also
+// sets, so HOME alone does not isolate seen.json.
 const scratch = mkdtempSync(join(tmpdir(), 'dsh-notch-test-'))
+process.env.DSH_HOME = scratch
 process.env.HOME = scratch
 process.env.USERPROFILE = scratch
-const dataDir = join(scratch, '.dsh', 'dsh-notch')
+const dataDir = join(scratch, 'dsh-notch')
 mkdirSync(dataDir, { recursive: true })
 
 const { Board } = await import('../src/board.ts')
