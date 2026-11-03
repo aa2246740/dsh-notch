@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @main enum EdgeDockProbe {
@@ -13,6 +14,135 @@ import SwiftUI
     }
     func point(_ pose: EdgeDockPose, _ f: CGPoint) -> CGPoint {
       CGPoint(x: pose.body.minX + pose.width*f.x, y: pose.body.minY + pose.height*f.y)
+    }
+    let sizing = make()
+    sizing.updateRest(CGSize(width:42,height:44))
+    check(sizing.flightIsSizing && sizing.settling && !sizing.blocksContent,
+          "hover sizing keeps content hit testing enabled")
+    for _ in 0..<480 {
+      if sizing.settling { check(sizing.flightIsSizing && !sizing.blocksContent, "sizing keeps hit testing enabled on every frame") }
+      sizing.advance(by:1.0/120)
+    }
+    sizing.begin(size:sizing.restSize,at:0)
+    check(sizing.blocksContent, "drag blocks content hit testing")
+    sizing.drag(inward:80,at:0.1); sizing.end(at:0.1)
+    check(sizing.blocksContent, "tuck flight blocks content hit testing")
+    for _ in 0..<480 {
+      if sizing.settling { check(sizing.blocksContent, "tuck blocks content on every frame") }
+      sizing.advance(by:1.0/120)
+    }
+    sizing.stop()
+
+    // Sample the actual layer tree, including the flipped NSHostingView and
+    // both native masks. A contour-only drawing cannot catch a second body.
+    let proofFolder=URL(fileURLWithPath:ProcessInfo.processInfo.environment["NOTCH_EDGE_OUTPUT"] ?? NSTemporaryDirectory())
+    try! FileManager.default.createDirectory(at:proofFolder,withIntermediateDirectories:true)
+    func resize(_ start: CGSize, to end: CGSize, compositor: Bool) {
+      let d=make(), p=NotchPanel(size:start)
+      d.reduceMotionOverride=true; d.updateRest(start); d.reduceMotionOverride=false
+      p.setFrameOrigin(CGPoint(x:-10000,y:-10000))
+      let h=NotchHostingView(rootView:EdgeDockSurface(dock:d,content:Color.black))
+      h.sizingOptions=[]; p.embedHost(h)
+      let c=EdgeDockController(dock:d,panel:p,hosting:h)
+      p.orderFrontRegardless()
+      d.automaticTicks=compositor
+      c.updateRest(end)
+      let samples=d.flightTimeline()
+      let root=p.contentView!.layer!, content=h.layer!
+      let moving=h.superview!.layer!
+      check(h.isFlipped && content.isGeometryFlipped, "probe exercises flipped hosting coordinates")
+      let contour=p.dockContourLayer as! CAShapeLayer
+      let mask=content.mask as! CAShapeLayer
+      // Read exactly what the controller uploaded, then replay those samples
+      // without a display-link or wall-clock race.
+      let outlines=(contour.animation(forKey:"elastic-flight-path") as? CAKeyframeAnimation)?.values as? [CGPath]
+      let clips=(mask.animation(forKey:"elastic-flight-path") as? CAKeyframeAnimation)?.values as? [CGPath]
+      let transforms=(moving.animation(forKey:"elastic-flight-transform") as? CAKeyframeAnimation)?.values as? [NSValue]
+      if compositor {
+        check(outlines?.count == samples.count && clips?.count == samples.count && transforms?.count == samples.count,
+              "controller uploads every contour, body mask and content transform together")
+        d.stop(); p.stopElasticFlight()
+      }
+      var worstError=0.0, mostSegments=0, count=0
+      for (index,sample) in samples.enumerated() {
+        if compositor {
+          CATransaction.begin(); CATransaction.setDisableActions(true)
+          contour.path=outlines![index]; mask.path=clips![index]
+          moving.transform=transforms![index].caTransform3DValue
+          CATransaction.commit()
+        } else {
+          // The endpoint drops both masks and returns to the native material.
+          if index == samples.count-1 { break }
+          if index > 0 { d.advance(by:sample.time-samples[index-1].time) }
+        }
+        p.contentView!.layoutSubtreeIfNeeded(); h.displayIfNeeded()
+        CATransaction.flush()
+        let outline=contour.path!, clip=mask.path!
+        let a=(contour.superlayer ?? root).convert(outline.boundingBoxOfPath,to:root)
+        let b=content.convert(clip.boundingBoxOfPath,to:root)
+        let error=max(abs(a.minX-b.minX),abs(a.minY-b.minY),abs(a.maxX-b.maxX),abs(a.maxY-b.maxY))
+        if index == 0 && error >= 0.5 {
+          print("FIRST_FRAME outline=\(a) body=\(b) view=\(h.frame) transform=\(content.affineTransform())")
+        }
+        worstError=max(worstError,error)
+        let scale=p.backingScaleFactor, width=Int(ceil(root.bounds.width*scale)), height=Int(ceil(root.bounds.height*scale))
+        let context=CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,
+          space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(NSColor.white.cgColor); context.fill(CGRect(x:0,y:0,width:width,height:height))
+        context.scaleBy(x:scale,y:scale); root.render(in:context)
+        let bitmap=NSBitmapImageRep(cgImage:context.makeImage()!)
+        var segments=0, inside=false
+        for y in 0..<height {
+          let color=bitmap.colorAt(x:width-Int(8*scale),y:y)!.usingColorSpace(.deviceRGB)!
+          let dark=max(color.redComponent,color.greenComponent,color.blueComponent)<0.3
+          if dark && !inside { segments += 1 }; inside=dark
+        }
+        mostSegments=max(mostSegments,segments); count += 1
+        if index == samples.count/2 {
+          try! bitmap.representation(using:.png,properties:[:])!.write(to:proofFolder.appendingPathComponent("resize-\(Int(start.width))x\(Int(start.height))-to-\(Int(end.width))x\(Int(end.height))-\(compositor ? "compositor":"manual").png"))
+        }
+        check(error<0.5,"resize \(start) -> \(end) compositor=\(compositor) sample \(index) masks coincide within 0.5 pt: \(error)")
+        check(segments==1,"resize \(start) -> \(end) compositor=\(compositor) sample \(index) renders exactly one dark segment: \(segments)")
+      }
+      print("RESIZE start=\(start) end=\(end) compositor=\(compositor) frames=\(count) maxMaskErrorPt=\(worstError) maxDarkSegments=\(mostSegments)")
+      d.setHidden(false,animated:false)
+      check(p.frame.size == end, "resize finishes at the requested size")
+      d.stop(); p.close()
+    }
+    for compositor in [false,true] {
+      for size in [CGSize(width:470,height:320),CGSize(width:38,height:100)] {
+        resize(size,to:CGSize(width:38,height:44),compositor:compositor)
+        resize(CGSize(width:38,height:44),to:size,compositor:compositor)
+      }
+    }
+
+    let hoverModel=BoardModel(); hoverModel.previewMode=true
+    let hoverDock=make(), hoverPanel=NotchPanel(size:CGSize(width:38,height:44))
+    hoverPanel.setFrameOrigin(CGPoint(x:-10000,y:-10000))
+    let hoverHost=NotchHostingView(rootView:EdgeDockSurface(dock:hoverDock,content:
+      RootView(model:hoverModel,panelSize:CGSize(width:470,height:320),restSize:CGSize(width:38,height:44))))
+    hoverHost.sizingOptions=[]; hoverPanel.embedHost(hoverHost)
+    let hoverController=EdgeDockController(dock:hoverDock,panel:hoverPanel,hosting:hoverHost)
+    let hoverSubscription=Publishers.CombineLatest(hoverModel.$currentIslandWidth,hoverModel.$currentIslandHeight)
+      .receive(on:DispatchQueue.main).sink { hoverController.updateRest(CGSize(width:$0,height:$1)) }
+    hoverPanel.orderFrontRegardless()
+    RunLoop.main.run(until:Date().addingTimeInterval(0.05)); settle(hoverDock)
+    let hoverFrame=hoverPanel.frame
+    for hovering in [true,false,true,false,true,false] {
+      hoverModel.isPillHovered=hovering
+      RunLoop.main.run(until:Date().addingTimeInterval(0.05))
+      check(!hoverDock.engaged && !hoverDock.blocksContent && hoverPanel.frame == hoverFrame,
+            "hover changes neither capsule dimensions nor hit testing")
+      if #available(macOS 26.0, *), let surface=hoverPanel.contentView as? NotchGlassSurface {
+        check(!surface.glass.isHidden, "hover keeps the same native glass material mounted")
+      }
+    }
+    hoverModel.isPillHovered=true; hoverModel.expanded=true
+    RunLoop.main.run(until:Date().addingTimeInterval(0.05))
+    check(!hoverModel.isPillHovered, "expansion clears the compact hover state")
+    hoverSubscription.cancel(); hoverDock.stop(); hoverPanel.close()
+    if ProcessInfo.processInfo.environment["NOTCH_EDGE_REGRESSION_ONLY"] == "1" {
+      print("FAILURES=\(failures)"); exit(failures == 0 ? 0:1)
     }
     for distance in [0.0,12,64,128,160,240,500,10000] {
       let raw=CGSize(width:distance*0.6,height:distance*0.8), p=EdgeDockDragLimit.project(raw)

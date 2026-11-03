@@ -661,15 +661,11 @@ struct RootView: View {
   @State private var rowsAppeared = false
 
   private var restCapsuleHeight: CGFloat {
-    let base = model.orbitLayout.height + 24
-    return model.isPillHovered ? base - 2 : base
+    model.orbitLayout.height + 24
   }
 
   private var targetWidth: CGFloat {
-    if model.expanded {
-      return panelSize.width
-    }
-    return model.isPillHovered ? 42 : 38
+    model.expanded ? panelSize.width : 38
   }
 
   private var targetHeight: CGFloat {
@@ -731,7 +727,8 @@ struct RootView: View {
             .clipped()
         } else {
           compactPillContent
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .frame(width:targetWidth,height:targetHeight)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             .transition(.opacity)
         }
       }
@@ -752,6 +749,9 @@ struct RootView: View {
     .onChange(of: CGSize(width: targetWidth, height: targetHeight), initial: true) { _, size in
       model.currentIslandWidth = size.width
       model.currentIslandHeight = size.height
+    }
+    .onChange(of:model.expanded) { _, expanded in
+      if expanded { model.isPillHovered = false }
     }
   }
 
@@ -799,11 +799,7 @@ struct RootView: View {
     }
     .buttonStyle(.plain)
     .onHover { hovering in
-      if !model.expanded {
-        model.isPillHovered = hovering
-        model.currentIslandWidth = targetWidth
-        model.currentIslandHeight = targetHeight
-      }
+      model.isPillHovered = hovering && !model.expanded
     }
   }
 

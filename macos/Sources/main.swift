@@ -155,7 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     guard panel != nil else { return }
     let hit = pointerOverVisual()
     dock.hover(hit)
-    guard !dock.engaged else { return }
+    guard !dock.blocksContent else { return }
+    model.isPillHovered = hit && !model.expanded
     if hit {
       enteredIsland = true
       foldWork?.cancel()

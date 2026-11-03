@@ -288,8 +288,7 @@ final class EdgeDockContourCache {
     let key=Key(width:size.width,height:size.height,radius:radius,trailing:trailing)
     if let existing=entries[key] { return existing }
     let path=EdgeDockGeometry.shell(in:CGRect(origin:.zero,size:size),radius:radius,trailing:trailing)
-    var flip=CGAffineTransform(a:1,b:0,c:0,d:-1,tx:0,ty:size.height)
-    let value=Contour(path:path,sorted:EdgeDockGeometry.sortedContour(path),bodyClip:path.cgPath.copy(using:&flip)!)
+    let value=Contour(path:path,sorted:EdgeDockGeometry.sortedContour(path),bodyClip:path.cgPath)
     if order.count == 32 { entries.removeValue(forKey:order.removeFirst()) }
     entries[key]=value; order.append(key); misses += 1
     return value
@@ -340,7 +339,7 @@ final class EdgeDockModel: NSObject, ObservableObject {
   private var flight: EdgeDockFlight?
   private var timeline: [EdgeDockSample] = []
   var flightDuration: Double { timeline.last?.time ?? 0 }
-  var blocksContent: Bool { hidden || dragging || settling }
+  var blocksContent: Bool { hidden || dragging || (settling && !flightIsSizing) }
   var contentOpacity: Double {
     let t = min(1, max(0, (pose.conceal - 0.25) / 0.60))
     return Double(1 - t * t * (3 - 2 * t))
@@ -627,18 +626,19 @@ extension NotchElasticFrame {
     outline = g.path(in:viewport).cgPath.copy(using:&flip)!
     translation = CGPoint(x:g.body.minX-viewport.minX,y:viewport.maxY-g.body.maxY)
     body = CGRect(origin:translation,size:pose.size)
+    let coverSize = cover ?? pose.size
+    contentFrame = CGRect(x:body.maxX-coverSize.width,y:body.maxY-coverSize.height,
+                          width:coverSize.width,height:coverSize.height)
     deformation = g.tension.nativeBodyDeformation
     let t = min(1,max(0,(pose.conceal-0.25)/0.60))
     opacity = Double(1-t*t*(3-2*t))
-    // The clip rides the body's trailing-top corner of the cover-sized
-    // content, revealing it as the pose morphs.
-    let coverSize = cover ?? pose.size
+    // NSHostingView's layer is flipped: its top edge is y=0 even though
+    // contentFrame and the backing contour use AppKit's upward Y axis.
     let clip = CGRect(origin:.zero,size:pose.size)
-    var bodyFlip = CGAffineTransform(a:1,b:0,c:0,d:-1,tx:0,ty:clip.height)
     let trailing=g.radius*min(1,max(0,pose.inward)/16)
     let clipPath = cache?.contour(size:pose.size,radius:g.radius,trailing:trailing).bodyClip
-      ?? EdgeDockGeometry.shell(in:clip,radius:g.radius,trailing:trailing).cgPath.copy(using:&bodyFlip)!
-    var place = CGAffineTransform(translationX:coverSize.width-pose.width,y:coverSize.height-pose.height)
+      ?? EdgeDockGeometry.shell(in:clip,radius:g.radius,trailing:trailing).cgPath
+    var place = CGAffineTransform(translationX:coverSize.width-pose.width,y:0)
     bodyClip = clipPath.copy(using:&place) ?? clipPath
   }
 }
@@ -850,18 +850,13 @@ final class EdgeDockController: NSObject {
       panel.setFrame(frame,display:false)
       panel.contentView?.layoutSubtreeIfNeeded()
     }
-    var flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: b.height)
-    panel.elasticMask(dock.engaged ? g.path(in:b).cgPath.copy(using:&flip) : nil)
     // Size-changing flights lay the content out once at the largest shell
     // the trajectory passes through, pinned to the body's trailing-top
     // corner. Size-preserving flights keep the original body-fitting frame.
-    let cover = dock.flightIsSizing ? dock.flightCoverSize : g.body.size
-    let contentFrame = dock.engaged
-      ? CGRect(x:g.body.maxX-b.minX-cover.width,y:b.maxY-g.body.minY-cover.height,width:cover.width,height:cover.height)
-      : nil
-    panel.positionMotionContent(contentFrame,opacity:dock.engaged ? dock.contentOpacity : 1,
-                                trailingRadius:g.radius * min(1,max(0,dock.pose.inward)/16),
-                                deformation:dock.engaged ? g.tension.nativeBodyDeformation : .identity)
+    let cover = dock.settling && dock.flightIsSizing ? dock.flightCoverSize : g.body.size
+    let elastic = dock.engaged ? NotchElasticFrame(pose:dock.pose,viewport:b,cache:contourCache,cover:cover) : nil
+    panel.elasticMask(elastic?.outline)
+    panel.positionMotionContent(elastic)
     flightRevision = dock.flightRevision
     if dock.settling && dock.automaticTicks {
       let samples = dock.flightTimeline()

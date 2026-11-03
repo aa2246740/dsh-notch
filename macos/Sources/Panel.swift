@@ -6,15 +6,18 @@ struct NotchElasticFrame {
   let bodyClip: CGPath
   let translation: CGPoint
   let body: CGRect
+  let contentFrame: CGRect
   let deformation: CGAffineTransform
   let opacity: Double
-  static func contentTransform(frame: CGRect, deformation d: CGAffineTransform, anchor: CGPoint) -> CGAffineTransform {
+  static func contentTransform(frame: CGRect, body: CGRect, deformation d: CGAffineTransform,
+                               anchor: CGPoint, origin: CGPoint) -> CGAffineTransform {
     // AppKit owns the backing layer's anchor. Contract around the body center
     // without changing that anchor or asking SwiftUI to lay the content out.
-    let center=CGPoint(x:(0.5-anchor.x)*frame.width,y:(0.5-anchor.y)*frame.height)
+    let center=CGPoint(x:body.midX-frame.minX-anchor.x*frame.width,
+                       y:body.midY-frame.minY-anchor.y*frame.height)
     let mapped=center.applying(d)
     return CGAffineTransform(a:d.a,b:d.b,c:d.c,d:d.d,
-      tx:frame.minX+center.x-mapped.x,ty:frame.minY+center.y-mapped.y)
+      tx:frame.minX-origin.x+center.x-mapped.x,ty:frame.minY-origin.y+center.y-mapped.y)
   }
 }
 
@@ -70,9 +73,9 @@ final class NotchPanel: NSPanel {
   var dockContourLayer: CALayer { motionMask }
   private weak var motionBacking: NSView?
   private weak var motionHosting: NSView?
+  private weak var motionContent: NotchMotionContent?
   private var motionActive = false
   private let motionBodyMask = CAShapeLayer()
-  private var motionBodyShape: CGRect?
   override func cancelOperation(_ sender: Any?) { cancelDock?() }
 
   func elasticMask(_ path: CGPath?) {
@@ -116,38 +119,22 @@ final class NotchPanel: NSPanel {
     }
     CATransaction.commit()
   }
-  func positionMotionContent(_ frame: CGRect?, opacity: Double, trailingRadius: CGFloat = 0, deformation: CGAffineTransform = .identity) {
-    guard let hosting = motionHosting else { return }
+  func positionMotionContent(_ pose: NotchElasticFrame?) {
+    guard let hosting = motionHosting, let content = motionContent else { return }
     if #available(macOS 26.0, *), let surface = contentView as? NotchGlassSurface {
-      surface.motionContentFrame = frame
-      surface.motionContentDeformation = deformation
+      surface.motionFrame = pose
     }
-    hosting.autoresizingMask = frame == nil ? [.width,.height] : []
-    let next = frame ?? contentView?.bounds ?? .zero
-    if hosting.frame.size != next.size { hosting.setFrameSize(next.size) }
-    if hosting.frame.origin != .zero { hosting.setFrameOrigin(.zero) }
-    // NSHostingView.setFrameOrigin invalidates SwiftUI layout even when its
-    // size stays constant. Composite the existing content in the same layer
-    // transaction as the contour instead of laying it out at every position.
-    if let layer=hosting.layer {
-      layer.setAffineTransform(NotchElasticFrame.contentTransform(frame:next,deformation:deformation,anchor:layer.anchorPoint))
-    }
-    hosting.layer?.opacity = Float(opacity)
-    if frame != nil {
-      let shape = CGRect(x:trailingRadius,y:0,width:next.width,height:next.height)
-      if motionBodyShape != shape {
-        let bounds = CGRect(origin:.zero,size:next.size)
-        let path = UnevenRoundedRectangle(topLeadingRadius:16,bottomLeadingRadius:16,
-          bottomTrailingRadius:trailingRadius,topTrailingRadius:trailingRadius,style:.continuous).path(in:bounds)
-        var flip = CGAffineTransform(a:1,b:0,c:0,d:-1,tx:0,ty:bounds.height)
-        motionBodyMask.frame = bounds; motionBodyMask.contentsScale = backingScaleFactor
-        motionBodyMask.path = path.cgPath.copy(using:&flip); motionBodyShape = shape
-      }
+    content.position(pose,in:contentView?.bounds ?? .zero)
+    content.layer?.opacity = Float(pose?.opacity ?? 1)
+    if let pose {
+      motionBodyMask.frame = hosting.bounds
+      motionBodyMask.contentsScale = backingScaleFactor
+      motionBodyMask.path = pose.bodyClip
       if hosting.layer?.mask !== motionBodyMask { hosting.layer?.mask = motionBodyMask }
-    } else { hosting.layer?.mask = nil; motionBodyShape = nil }
+    } else { hosting.layer?.mask = nil }
   }
   func startElasticFlight(frames: [NotchElasticFrame], times sampleTimes: [Double], began: Double) {
-    guard let content = motionHosting?.layer, frames.count > 1, frames.count == sampleTimes.count,
+    guard let view = motionContent, let content = view.layer, frames.count > 1, frames.count == sampleTimes.count,
           let duration=sampleTimes.last, duration > 0 else { return }
     let times = sampleTimes.map { NSNumber(value:$0/duration) }
     func animate(_ layer: CALayer, _ key: String, _ values: [Any]) {
@@ -166,9 +153,8 @@ final class NotchPanel: NSPanel {
       // Content stays pinned to the body's trailing-top corner. When the
       // content is laid out larger than the pose (a size-morphing flight),
       // the clip reveals it from that corner as the body blooms or absorbs.
-      let frame=CGRect(x:$0.body.maxX-content.bounds.width,y:$0.body.maxY-content.bounds.height,
-                       width:content.bounds.width,height:content.bounds.height)
-      let transform=NotchElasticFrame.contentTransform(frame:frame,deformation:$0.deformation,anchor:content.anchorPoint)
+      let transform=NotchElasticFrame.contentTransform(frame:$0.contentFrame,body:$0.body,
+        deformation:$0.deformation,anchor:content.anchorPoint,origin:view.frame.origin)
       return NSValue(caTransform3D:CATransform3DMakeAffineTransform(transform))
     })
     animate(content,"opacity",frames.map { NSNumber(value:$0.opacity) })
@@ -177,8 +163,8 @@ final class NotchPanel: NSPanel {
   func stopElasticFlight() {
     motionMask.removeAnimation(forKey:"elastic-flight-path")
     motionBodyMask.removeAnimation(forKey:"elastic-flight-path")
-    motionHosting?.layer?.removeAnimation(forKey:"elastic-flight-transform")
-    motionHosting?.layer?.removeAnimation(forKey:"elastic-flight-opacity")
+    motionContent?.layer?.removeAnimation(forKey:"elastic-flight-transform")
+    motionContent?.layer?.removeAnimation(forKey:"elastic-flight-opacity")
   }
   private var resizeTimer: Timer?
   private var resizeTarget: NSSize?
@@ -292,8 +278,9 @@ final class NotchPanel: NSPanel {
   func embedHost(_ hosting: NSView) {
     motionHosting = hosting
     if #available(macOS 26.0, *), NotchMaterial.usesLiquidGlass {
-      contentView = NotchGlassSurface(hosting: hosting, frame: contentView?.bounds ?? NSRect(origin: .zero, size: frame.size))
-      installMotionBacking(below:hosting)
+      let surface=NotchGlassSurface(hosting: hosting, frame: contentView?.bounds ?? NSRect(origin: .zero, size: frame.size))
+      contentView=surface; motionContent=surface.content
+      installMotionBacking(below:surface.content)
       return
     }
     let effect = NSVisualEffectView(frame: contentView?.bounds ?? NSRect(origin: .zero, size: frame.size))
@@ -308,13 +295,10 @@ final class NotchPanel: NSPanel {
     effect.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
     effect.appearance = NSAppearance(named: .darkAqua)
     contentView = effect
-    hosting.autoresizingMask = [.width, .height]
-    hosting.frame = effect.bounds
-    hosting.wantsLayer = true
-    hosting.layer?.isOpaque = false
-    hosting.layer?.backgroundColor = NSColor.clear.cgColor
-    effect.addSubview(hosting)
-    installMotionBacking(below:hosting)
+    let content=NotchMotionContent(hosting:hosting)
+    content.position(nil,in:effect.bounds)
+    effect.addSubview(content); motionContent=content
+    installMotionBacking(below:content)
   }
 
   private func installMotionBacking(below hosting: NSView) {
@@ -329,6 +313,35 @@ final class NotchPanel: NSPanel {
   }
 }
 
+// AppKit owns NSHostingView's layer geometry and resets its transform on the
+// first display. Move a plain parent view instead; SwiftUI keeps one fixed
+// layout and native hit testing follows the same positioned content.
+final class NotchMotionContent: NSView {
+  private let hosting: NSView
+  init(hosting: NSView) {
+    self.hosting=hosting
+    super.init(frame:.zero)
+    wantsLayer=true
+    hosting.autoresizingMask=[.width,.height]
+    hosting.wantsLayer=true; hosting.layer?.isOpaque=false
+    hosting.layer?.backgroundColor=NSColor.clear.cgColor
+    addSubview(hosting)
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+  override var isOpaque: Bool { false }
+  func position(_ pose: NotchElasticFrame?, in bounds: CGRect) {
+    let next=pose?.contentFrame ?? bounds
+    autoresizingMask=pose == nil ? [.width,.height] : []
+    if frame != next { frame=next }
+    let hostFrame=CGRect(origin:.zero,size:next.size)
+    if hosting.frame != hostFrame { hosting.frame=hostFrame }
+    if let layer {
+      layer.setAffineTransform(NotchElasticFrame.contentTransform(frame:next,body:pose?.body ?? next,
+        deformation:pose?.deformation ?? .identity,anchor:layer.anchorPoint,origin:next.origin))
+    }
+  }
+}
+
 private final class NotchMotionBacking: NSView {
   override var isOpaque: Bool { false }
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -337,11 +350,9 @@ private final class NotchMotionBacking: NSView {
 @available(macOS 26.0, *)
 final class NotchGlassSurface: NSView {
   let glass = NSGlassEffectView()
-  private let content = NSView()
-  private let hosting: NSView
+  let content: NotchMotionContent
   private let radius: CGFloat = 16
-  var motionContentFrame: CGRect?
-  var motionContentDeformation = CGAffineTransform.identity
+  var motionFrame: NotchElasticFrame?
   func setMotionActive(_ active: Bool) {
     if !active { glass.isHidden = false; return }
     // Rubber is opaque. Do not render a backdrop over the large reserved canvas.
@@ -349,7 +360,7 @@ final class NotchGlassSurface: NSView {
   }
 
   init(hosting: NSView, frame: NSRect) {
-    self.hosting = hosting
+    content=NotchMotionContent(hosting:hosting)
     super.init(frame: frame)
     wantsLayer = true
     layer?.masksToBounds = true
@@ -363,10 +374,6 @@ final class NotchGlassSurface: NSView {
     if #available(macOS 27.0, *) { glass.effectIsInteractive = true }
     addSubview(glass)
     addSubview(content)
-    hosting.wantsLayer = true
-    hosting.layer?.isOpaque = false
-    hosting.layer?.backgroundColor = NSColor.clear.cgColor
-    content.addSubview(hosting)
     layout()
   }
 
@@ -378,12 +385,7 @@ final class NotchGlassSurface: NSView {
     // Extend the native right-hand rounded end beyond the clipping boundary.
     // The visible body stays flush with the display edge even while resizing.
     glass.frame = NSRect(x: 0, y: 0, width: bounds.width + radius, height: bounds.height)
-    content.frame = bounds
-    let frame = motionContentFrame ?? bounds
-    hosting.frame = CGRect(origin:.zero,size:frame.size)
-    if let layer=hosting.layer {
-      layer.setAffineTransform(NotchElasticFrame.contentTransform(frame:frame,deformation:motionContentDeformation,anchor:layer.anchorPoint))
-    }
+    content.position(motionFrame,in:bounds)
   }
 }
 

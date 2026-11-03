@@ -70,7 +70,9 @@ final class ElasticPreviewDelegate: NSObject, NSApplicationDelegate, NSWindowDel
     cursorTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
       Task { @MainActor in
         guard let self, let panel = self.panel else { return }
-        self.dock.hover(self.controller?.contains(NSEvent.mouseLocation) ?? panel.frame.contains(NSEvent.mouseLocation))
+        let hit=self.controller?.contains(NSEvent.mouseLocation) ?? panel.frame.contains(NSEvent.mouseLocation)
+        self.dock.hover(hit)
+        if !self.dock.blocksContent { self.model.isPillHovered = hit && !self.model.expanded }
       }
     }
     NSApplication.shared.activate(ignoringOtherApps: true)
