@@ -5,6 +5,7 @@ struct NotchElasticFrame {
   let outline: CGPath
   let bodyClip: CGPath
   let translation: CGPoint
+  let body: CGRect
   let deformation: CGAffineTransform
   let opacity: Double
   static func contentTransform(frame: CGRect, deformation d: CGAffineTransform, anchor: CGPoint) -> CGAffineTransform {
@@ -27,11 +28,38 @@ enum NotchMaterial {
 }
 
 enum NotchGeometryAnimation {
-  static let animation = Animation.spring(duration: 0.4, bounce: 0.08)
-  static let duration: TimeInterval = 0.4
+  // Underdamped spring (ω≈22, ζ≈0.78): keeps a small bloom overshoot yet
+  // settles inside ~0.35s, so quick resizes don't leave a residual tail.
+  static let animation = Animation.interpolatingSpring(mass: 1, stiffness: 480, damping: 34)
+  /// Total sweep for the manual macOS <15 window-frame fallback.
+  static let duration: TimeInterval = 0.45
+  /// The folded expanded content may stay mounted this long before the
+  /// fallback forces the swap. It outlives the real collapse flight, so a
+  /// missed settle can never leave the wrong surface inside the capsule.
+  static let foldDelay: TimeInterval = 0.8
   static func progress(_ t: Double) -> Double {
     let x = min(1, max(0, t))
-    return x*x*x*(x*(6*x-15)+10)
+    // Underdamped sweep matching the window spring: fast rise, one small
+    // settle overshoot, and exactly 1 at the end.
+    let w = 22.0, z = 0.78
+    let wd = w * (1 - z*z).squareRoot()
+    let f = 1 - exp(-z*w*x) * (cos(wd*x) + z*w/wd*sin(wd*x))
+    let end = 1 - exp(-z*w) * (cos(wd) + z*w/wd*sin(wd))
+    return f/end
+  }
+}
+
+/// SwiftUI-side motion vocabulary. Content always moves slightly faster than
+/// the shell it lives in, so the surface reads as one material, not two
+/// timelines chasing each other.
+enum NotchMotion {
+  static let shell = Animation.spring(response: 0.5, dampingFraction: 0.78)
+  static let contents = Animation.spring(response: 0.38, dampingFraction: 0.82)
+  static let quick = Animation.spring(response: 0.22, dampingFraction: 0.9)
+  static let fadeIn = Animation.easeOut(duration: 0.20)
+  static let merge = Animation.easeIn(duration: 0.12)
+  static func stagger(_ index: Int) -> Animation {
+    contents.delay(min(0.18, Double(index) * 0.045))
   }
 }
 
@@ -135,7 +163,11 @@ final class NotchPanel: NSPanel {
     }
     animate(motionMask,"path",frames.map(\.outline))
     animate(content,"transform",frames.map {
-      let frame=CGRect(origin:$0.translation,size:content.bounds.size)
+      // Content stays pinned to the body's trailing-top corner. When the
+      // content is laid out larger than the pose (a size-morphing flight),
+      // the clip reveals it from that corner as the body blooms or absorbs.
+      let frame=CGRect(x:$0.body.maxX-content.bounds.width,y:$0.body.maxY-content.bounds.height,
+                       width:content.bounds.width,height:content.bounds.height)
       let transform=NotchElasticFrame.contentTransform(frame:frame,deformation:$0.deformation,anchor:content.anchorPoint)
       return NSValue(caTransform3D:CATransform3DMakeAffineTransform(transform))
     })
