@@ -123,8 +123,15 @@ export class Board {
   private readonly browserCompletions = new Map<string, SidebarRow>()
   private readonly listeners = new Set<() => void>()
   private focus: NotchFocus | null = null
+  // NOTE (Windows port): declared as an explicit field instead of a constructor
+  // parameter property. Node 24 loads this .ts entry with strip-only type
+  // stripping, which rejects parameter properties outright
+  // (ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX). Semantics are unchanged.
+  private readonly ctx: Context
 
-  constructor(private readonly ctx: Context) {}
+  constructor(ctx: Context) {
+    this.ctx = ctx
+  }
 
   onChange(fn: () => void): () => void {
     this.listeners.add(fn)
