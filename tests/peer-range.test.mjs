@@ -29,7 +29,7 @@ const FOCUS_PEERS = [
 
 test('Harness peer range accepts 0.2.1-rc.5', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-  assert.equal(pkg.version, '0.3.7')
+  assert.equal(pkg.version, '0.3.8')
   assert.equal(pkg.devDependencies['@deepseek-ai/dsh-home-paths'], RANGE)
   for (const name of HOST_PEERS) assert.equal(pkg.peerDependencies[name], RANGE)
   for (const name of OPTIONAL) assert.equal(pkg.peerDependenciesMeta[name].optional, true)

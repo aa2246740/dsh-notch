@@ -10,7 +10,7 @@ Installation has two parts: a **Host plugin inside DSH** that supplies session s
 
 ## Installation
 
-**macOS only: the native Notch helper requires macOS 14+ on Apple Silicon.** DSH Notch 0.3.7 supports official DeepSeek Harness `0.2.1-rc.5`.
+**macOS only: the native Notch helper requires macOS 14+ on Apple Silicon.** DSH Notch 0.3.8 supports official DeepSeek Harness `0.2.1-rc.5`.
 
 ### 1. Install both plugin packages
 
@@ -46,9 +46,9 @@ A loaded Host writes `$DSH_HOME/dsh-notch/runtime.json`. This is a private conne
 
 ### 2. Download and start the native helper (macOS only)
 
-Download `dsh-notch-0.3.3-macos-arm64.tar.gz` (native executable and robot resources; macOS 14+, Apple Silicon; the native helper is still 0.3.3 because the v0.3.7 release has no newer native archive) and `SHA256SUMS` (place beside the download and run `shasum -a 256 -c SHA256SUMS`) from [v0.3.4](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.4).
+Download `dsh-notch-0.3.3-macos-arm64.tar.gz` (native executable and robot resources; macOS 14+, Apple Silicon; the native helper is still 0.3.3 because the v0.3.8 release has no newer native archive) and `SHA256SUMS` (place beside the download and run `shasum -a 256 -c SHA256SUMS`) from [v0.3.4](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.4).
 
-Prebuilt packages do not require Swift or DSHX. Other architectures require a source build and are not covered by this binary release. The `dsh-notch-0.3.7.tgz` and `dsh-notch-focus-0.1.5.tgz` on the [v0.3.7 release](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.7) are offline alternatives to the npm installs in step 1; a normal install does not need them.
+Prebuilt packages do not require Swift or DSHX. Other architectures require a source build and are not covered by this binary release. The `dsh-notch-0.3.8.tgz` and `dsh-notch-focus-0.1.5.tgz` on the [v0.3.8 release](https://github.com/aa2246740/dsh-notch/releases/tag/v0.3.8) are offline alternatives to the npm installs in step 1; a normal install does not need them.
 
 ```sh
 tar -xzf dsh-notch-0.3.3-macos-arm64.tar.gz
